@@ -1,0 +1,18 @@
+{
+  "name": "ideoprompt",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Describe an image, get a 100% schema-valid Ideogram 4 JSON prompt — generated fully locally.",
+  "type": "module",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "node-llama-cpp": "^3.18.1"
+  }
+}
