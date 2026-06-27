@@ -1,148 +1,228 @@
 // Ideoprompt — local Ideogram 4 JSON prompt generator.
 //
-// Pipeline per request:
-//   1. Grammar-constrained generation (node-llama-cpp GBNF grammar compiled
-//      from generation-schema.mjs) — structure, key order and types are
-//      enforced at the token-sampling level.
-//   2. Deterministic normalization (normalize.mjs) — hex case, bbox clamping,
-//      palette caps, variant conflicts, canonical key order.
-//   3. AJV validation against the full official schema + key-order checks
-//      (validate.mjs). Only valid captions are returned; one automatic
-//      regeneration is attempted on the rare residual failure.
+// Spawns llama-server (bundled with node-llama-cpp) as a subprocess with
+// --mmproj so vision input works, then talks to its OpenAI-compatible API.
+// The same normalize → validate pipeline is preserved.
 
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { getLlama, LlamaChatSession } from "node-llama-cpp";
-import { GENERATION_SCHEMA } from "./src/generation-schema.mjs";
+import { getLlama } from "node-llama-cpp";
 import { normalizeCaption, serializeCaption } from "./src/normalize.mjs";
 import { validateCaption } from "./src/validate.mjs";
 import { SYSTEM_PROMPT, FEW_SHOT } from "./src/prompt.mjs";
+import { GENERATION_SCHEMA } from "./src/generation-schema.mjs";
 import { IDEOGRAM_SCHEMA } from "./src/ideogram-schema.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 8123;
 const HOST = "127.0.0.1";
+const LLAMA_PORT = Number(process.env.LLAMA_PORT) || 8124;
 const CONTEXT_SIZE = Number(process.env.CONTEXT_SIZE) || 8192;
 const MAX_ATTEMPTS = 2;
 
-function resolveModelPath() {
-  if (process.env.MODEL_PATH) return path.resolve(process.env.MODEL_PATH);
+// ── model / mmproj discovery ──────────────────────────────────────────────────
+function resolveModels() {
   const modelsDir = path.join(__dirname, "models");
-  const ggufs = fs.existsSync(modelsDir)
-    ? fs.readdirSync(modelsDir).filter((f) => f.toLowerCase().endsWith(".gguf")).sort()
-    : [];
-  if (ggufs.length === 0) {
-    console.error(
-      "No .gguf model found in app/models/. Run the install script, or set MODEL_PATH."
-    );
+  if (!fs.existsSync(modelsDir)) {
+    console.error("No models/ directory found. Run the install script first.");
     process.exit(1);
   }
-  return path.join(modelsDir, ggufs[0]);
+  const files = fs.readdirSync(modelsDir);
+  const modelFile = process.env.MODEL_PATH
+    ? path.resolve(process.env.MODEL_PATH)
+    : (() => {
+        const f = files.filter(f => f.toLowerCase().endsWith(".gguf") && !f.startsWith("mmproj")).sort()[0];
+        if (!f) { console.error("No model .gguf found in app/models/"); process.exit(1); }
+        return path.join(modelsDir, f);
+      })();
+  const mmprojFile = process.env.MMPROJ_PATH
+    ? path.resolve(process.env.MMPROJ_PATH)
+    : (() => {
+        const f = files.filter(f => f.startsWith("mmproj") && f.toLowerCase().endsWith(".gguf")).sort()[0];
+        return f ? path.join(modelsDir, f) : null;
+      })();
+  return { modelFile, mmprojFile };
 }
 
-const modelPath = resolveModelPath();
-console.log(`Loading model: ${path.basename(modelPath)} ...`);
+// ── spawn llama-server ────────────────────────────────────────────────────────
+async function startLlamaServer(modelFile, mmprojFile) {
+  // Resolve the llama-server binary that ships with node-llama-cpp
+  const llama = await getLlama();
+  const llamaBinDir = path.dirname(llama.llamaCppReleasePath ?? "");
+  // Try a few candidate names/locations
+  const candidates = [
+    path.join(llamaBinDir, "llama-server"),
+    path.join(llamaBinDir, "llama-server.exe"),
+    path.join(__dirname, "node_modules", ".bin", "llama-server"),
+    "llama-server"
+  ];
+  const serverBin = candidates.find(c => {
+    try { return fs.existsSync(c); } catch { return false; }
+  }) ?? "llama-server";
 
-const llama = await getLlama();
-const model = await llama.loadModel({ modelPath });
-const grammar = await llama.createGrammarForJsonSchema(GENERATION_SCHEMA);
-console.log(`Model loaded (gpu: ${llama.gpu || "cpu"})`);
+  const args = [
+    "--model", modelFile,
+    "--ctx-size", String(CONTEXT_SIZE),
+    "--port", String(LLAMA_PORT),
+    "--host", "127.0.0.1",
+    "--no-webui",
+    "--jinja",           // enables proper chat template rendering for Qwen3-VL
+    "--flash-attn", "on",
+    "--parallel", "1",
+    "--log-disable"
+  ];
+  if (mmprojFile) {
+    args.push("--mmproj", mmprojFile);
+    console.log(`Vision enabled: ${path.basename(mmprojFile)}`);
+  } else {
+    console.warn("No mmproj file found — image input will not work.");
+  }
 
-// One generation at a time — keeps memory bounded and avoids GPU contention.
-let queue = Promise.resolve();
-function enqueue(job) {
-  const run = queue.then(job, job);
-  queue = run.catch(() => {});
-  return run;
+  console.log(`Starting llama-server on port ${LLAMA_PORT}…`);
+  const proc = spawn(serverBin, args, { stdio: ["ignore", "pipe", "pipe"] });
+  proc.stderr.on("data", d => process.stderr.write(d));
+
+  // Wait until the server is accepting connections
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("llama-server startup timeout")), 120_000);
+    const check = async () => {
+      try {
+        const r = await fetch(`http://127.0.0.1:${LLAMA_PORT}/health`);
+        if (r.ok) { clearTimeout(timeout); resolve(); return; }
+      } catch {}
+      setTimeout(check, 500);
+    };
+    proc.on("exit", (code) => { clearTimeout(timeout); reject(new Error(`llama-server exited with code ${code}`)); });
+    check();
+  });
+
+  process.on("exit", () => proc.kill());
+  return proc;
 }
 
-function buildChatHistory() {
-  const history = [{ type: "system", text: SYSTEM_PROMPT }];
+// ── build the few-shot messages array ────────────────────────────────────────
+function buildMessages(description, imageBase64, lastErrors) {
+  const messages = [{ role: "system", content: SYSTEM_PROMPT }];
+
+  // Few-shot examples (text only)
   for (const [user, response] of FEW_SHOT) {
-    history.push({ type: "user", text: user });
-    history.push({ type: "model", response: [response] });
+    messages.push({ role: "user", content: user });
+    messages.push({ role: "assistant", content: response });
   }
-  return history;
-}
 
-async function generateOnce(description, imageBase64, { temperature, onTextChunk }) {
-  const context = await model.createContext({ contextSize: CONTEXT_SIZE });
-  try {
-    const session = new LlamaChatSession({
-      contextSequence: context.getSequence(),
-      systemPrompt: SYSTEM_PROMPT
-    });
-    session.setChatHistory(buildChatHistory());
-
-    // Build the prompt — if an image is supplied, prepend it as a vision input.
-    let promptInput;
-    if (imageBase64) {
-      const imageBuffer = Buffer.from(imageBase64, "base64");
-      promptInput = [
-        { type: "image", data: imageBuffer },
-        {
-          type: "text",
-          text: description
-            ? `Analyse this image and use it as the subject. Additional context: ${description}`
-            : "Analyse this image and generate a prompt for it."
-        }
-      ];
-    } else {
-      promptInput = description;
+  // Actual user turn
+  let userContent;
+  if (imageBase64) {
+    // Strip data-URL prefix to get bare base64 if present, then re-attach
+    const base64Data = imageBase64.replace(/^data:[^;]+;base64,/, "");
+    userContent = [
+      {
+        type: "image_url",
+        image_url: { url: `data:image/jpeg;base64,${base64Data}` }
+      },
+      {
+        type: "text",
+        text: description
+          ? `Analyse this image and use it as the subject. Additional context from user: ${description}`
+          : "Analyse this image and generate a detailed Ideogram 4 JSON prompt for it."
+      }
+    ];
+    if (lastErrors.length > 0) {
+      userContent.push({ type: "text", text: "\n\n(Previous attempt had problems, fix them: " + lastErrors.join("; ") + ")" });
     }
-
-    const text = await session.prompt(promptInput, {
-      grammar,
-      temperature,
-      maxTokens: 3000,
-      onTextChunk
-    });
-    return text;
-  } finally {
-    await context.dispose();
+  } else {
+    userContent = description + (lastErrors.length > 0
+      ? "\n\n(Previous attempt had problems, fix them: " + lastErrors.join("; ") + ")"
+      : "");
   }
+  messages.push({ role: "user", content: userContent });
+  return messages;
 }
 
+// ── call llama-server OpenAI-compatible API ───────────────────────────────────
+async function callLlamaServer(messages, temperature, onChunk) {
+  const res = await fetch(`http://127.0.0.1:${LLAMA_PORT}/v1/chat/completions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "local",
+      messages,
+      temperature,
+      max_tokens: 3000,
+      stream: true,
+      response_format: {
+        type: "json_schema",
+        json_schema: { name: "ideogram_prompt", schema: GENERATION_SCHEMA, strict: true }
+      }
+    })
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`llama-server error ${res.status}: ${err}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let fullText = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop();
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const data = line.slice(6).trim();
+      if (data === "[DONE]") continue;
+      try {
+        const evt = JSON.parse(data);
+        const chunk = evt.choices?.[0]?.delta?.content ?? "";
+        if (chunk) {
+          fullText += chunk;
+          onChunk(chunk);
+        }
+      } catch {}
+    }
+  }
+  return fullText;
+}
+
+// ── main generation pipeline ──────────────────────────────────────────────────
 async function generateCaption(description, imageBase64, emit) {
   let lastErrors = [];
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     if (attempt > 1) emit({ type: "retry", attempt, errors: lastErrors });
 
-    let prompt = description;
-    if (lastErrors.length > 0) {
-      prompt +=
-        "\n\n(Your previous answer had these problems, fix them: " +
-        lastErrors.join("; ") +
-        ")";
-    }
-
+    const messages = buildMessages(description, imageBase64, lastErrors);
     const started = Date.now();
-    const text = await generateOnce(prompt, imageBase64, {
-      temperature: attempt === 1 ? 0.7 : 0.3,
-      onTextChunk: (chunk) => emit({ type: "chunk", text: chunk })
-    });
+
+    let text;
+    try {
+      text = await callLlamaServer(
+        messages,
+        attempt === 1 ? 0.7 : 0.3,
+        (chunk) => emit({ type: "chunk", text: chunk })
+      );
+    } catch (err) {
+      emit({ type: "error", message: String(err?.message || err) });
+      return;
+    }
 
     let raw;
-    try {
-      raw = JSON.parse(text);
-    } catch {
-      lastErrors = ["output was not parseable JSON"];
-      continue;
-    }
+    try { raw = JSON.parse(text); }
+    catch { lastErrors = ["output was not parseable JSON"]; continue; }
 
     const normalized = normalizeCaption(raw);
-    if (!normalized.ok) {
-      lastErrors = [normalized.reason];
-      continue;
-    }
+    if (!normalized.ok) { lastErrors = [normalized.reason]; continue; }
 
     const { valid, errors } = validateCaption(normalized.value);
-    if (!valid) {
-      lastErrors = errors;
-      continue;
-    }
+    if (!valid) { lastErrors = errors; continue; }
 
     emit({
       type: "done",
@@ -156,17 +236,18 @@ async function generateCaption(description, imageBase64, emit) {
   }
   emit({
     type: "error",
-    message: "Could not produce a valid caption after " + MAX_ATTEMPTS + " attempts.",
+    message: `Could not produce a valid caption after ${MAX_ATTEMPTS} attempts.`,
     errors: lastErrors
   });
 }
 
+// ── HTTP glue (unchanged from original) ──────────────────────────────────────
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let body = "";
     req.on("data", (chunk) => {
       body += chunk;
-      if (body.length > 20_000_000) reject(new Error("body too large")); // raised to 20 MB for images
+      if (body.length > 20_000_000) reject(new Error("body too large"));
     });
     req.on("end", () => resolve(body));
     req.on("error", reject);
@@ -174,10 +255,22 @@ function readBody(req) {
 }
 
 function sendJson(res, status, value) {
-  const body = JSON.stringify(value);
   res.writeHead(status, { "Content-Type": "application/json" });
-  res.end(body);
+  res.end(JSON.stringify(value));
 }
+
+let queue = Promise.resolve();
+function enqueue(job) {
+  const run = queue.then(job, job);
+  queue = run.catch(() => {});
+  return run;
+}
+
+// ── startup ───────────────────────────────────────────────────────────────────
+const { modelFile, mmprojFile } = resolveModels();
+console.log(`Model: ${path.basename(modelFile)}`);
+await startLlamaServer(modelFile, mmprojFile);
+console.log("llama-server ready.");
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
@@ -189,11 +282,19 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "GET" && url.pathname === "/api/health") {
-    sendJson(res, 200, {
-      status: "ok",
-      model: path.basename(modelPath),
-      gpu: llama.gpu || "cpu"
-    });
+    // Proxy health from llama-server and enrich it
+    try {
+      const h = await fetch(`http://127.0.0.1:${LLAMA_PORT}/health`);
+      const hj = await h.json();
+      sendJson(res, 200, {
+        status: hj.status ?? "ok",
+        model: path.basename(modelFile),
+        mmproj: mmprojFile ? path.basename(mmprojFile) : null,
+        vision: !!mmprojFile
+      });
+    } catch {
+      sendJson(res, 503, { status: "starting" });
+    }
     return;
   }
 
@@ -203,15 +304,12 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/api/generate") {
-    let description;
-    let imageBase64 = null;
+    let description, imageBase64 = null;
     try {
       const body = JSON.parse(await readBody(req));
       description = typeof body.description === "string" ? body.description.trim() : "";
-      // Accept image as a base64 string, optionally with a data-URL prefix.
-      if (typeof body.image === "string" && body.image.length > 0) {
-        imageBase64 = body.image.replace(/^data:[^;]+;base64,/, "");
-      }
+      if (typeof body.image === "string" && body.image.length > 0)
+        imageBase64 = body.image;
     } catch {
       sendJson(res, 400, { error: "invalid JSON body" });
       return;
@@ -221,7 +319,6 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // NDJSON stream: {type:"chunk"|"retry"|"done"|"error", ...} per line.
     res.writeHead(200, {
       "Content-Type": "application/x-ndjson; charset=utf-8",
       "Cache-Control": "no-cache",
