@@ -67,7 +67,7 @@ function buildChatHistory() {
   return history;
 }
 
-async function generateOnce(description, { temperature, onTextChunk }) {
+async function generateOnce(description, imageBase64, { temperature, onTextChunk }) {
   const context = await model.createContext({ contextSize: CONTEXT_SIZE });
   try {
     const session = new LlamaChatSession({
@@ -75,7 +75,25 @@ async function generateOnce(description, { temperature, onTextChunk }) {
       systemPrompt: SYSTEM_PROMPT
     });
     session.setChatHistory(buildChatHistory());
-    const text = await session.prompt(description, {
+
+    // Build the prompt — if an image is supplied, prepend it as a vision input.
+    let promptInput;
+    if (imageBase64) {
+      const imageBuffer = Buffer.from(imageBase64, "base64");
+      promptInput = [
+        { type: "image", data: imageBuffer },
+        {
+          type: "text",
+          text: description
+            ? `Analyse this image and use it as the subject. Additional context: ${description}`
+            : "Analyse this image and generate a prompt for it."
+        }
+      ];
+    } else {
+      promptInput = description;
+    }
+
+    const text = await session.prompt(promptInput, {
       grammar,
       temperature,
       maxTokens: 3000,
@@ -87,7 +105,7 @@ async function generateOnce(description, { temperature, onTextChunk }) {
   }
 }
 
-async function generateCaption(description, emit) {
+async function generateCaption(description, imageBase64, emit) {
   let lastErrors = [];
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     if (attempt > 1) emit({ type: "retry", attempt, errors: lastErrors });
@@ -101,7 +119,7 @@ async function generateCaption(description, emit) {
     }
 
     const started = Date.now();
-    const text = await generateOnce(prompt, {
+    const text = await generateOnce(prompt, imageBase64, {
       temperature: attempt === 1 ? 0.7 : 0.3,
       onTextChunk: (chunk) => emit({ type: "chunk", text: chunk })
     });
@@ -148,7 +166,7 @@ function readBody(req) {
     let body = "";
     req.on("data", (chunk) => {
       body += chunk;
-      if (body.length > 1_000_000) reject(new Error("body too large"));
+      if (body.length > 20_000_000) reject(new Error("body too large")); // raised to 20 MB for images
     });
     req.on("end", () => resolve(body));
     req.on("error", reject);
@@ -186,15 +204,20 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/api/generate") {
     let description;
+    let imageBase64 = null;
     try {
       const body = JSON.parse(await readBody(req));
       description = typeof body.description === "string" ? body.description.trim() : "";
+      // Accept image as a base64 string, optionally with a data-URL prefix.
+      if (typeof body.image === "string" && body.image.length > 0) {
+        imageBase64 = body.image.replace(/^data:[^;]+;base64,/, "");
+      }
     } catch {
       sendJson(res, 400, { error: "invalid JSON body" });
       return;
     }
-    if (!description) {
-      sendJson(res, 400, { error: "missing 'description'" });
+    if (!description && !imageBase64) {
+      sendJson(res, 400, { error: "provide 'description', 'image' (base64), or both" });
       return;
     }
 
@@ -206,7 +229,7 @@ const server = http.createServer(async (req, res) => {
     });
     const emit = (event) => res.write(JSON.stringify(event) + "\n");
     try {
-      await enqueue(() => generateCaption(description, emit));
+      await enqueue(() => generateCaption(description, imageBase64, emit));
     } catch (err) {
       emit({ type: "error", message: String(err?.message || err) });
     }
