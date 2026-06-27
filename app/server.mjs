@@ -80,6 +80,7 @@ async function startLlamaServer(serverBin, modelFile, mmprojFile) {
     "--no-webui",
     "--jinja",
     "--flash-attn", "on",
+    "--n-gpu-layers", "99",  // offload all layers to GPU (RTX 3090 has plenty of VRAM)
     "--parallel", "1",
     "--log-disable",
   ];
