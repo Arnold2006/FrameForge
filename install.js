@@ -10,35 +10,12 @@ module.exports = {
         message: ["npm install"]
       }
     },
-    // Download pre-built llama.cpp Windows binaries (includes llama-server.exe)
-    // Uses GitHub API to get the latest release tag, then downloads the AVX2 zip
+    // Download pre-built llama.cpp Windows binaries (llama-server.exe etc.)
     {
       method: "shell.run",
       params: {
         path: "app",
-        message: [
-          "node -e \"" +
-          "const https = require('https');" +
-          "const fs = require('fs');" +
-          "const path = require('path');" +
-          "const { execSync } = require('child_process');" +
-          "const req = https.get('https://api.github.com/repos/ggml-org/llama.cpp/releases/latest', {headers:{'User-Agent':'node'}}, res => {" +
-          "  let d=''; res.on('data',c=>d+=c); res.on('end',()=>{" +
-          "    const tag = JSON.parse(d).tag_name;" +
-          "    const url = 'https://github.com/ggml-org/llama.cpp/releases/download/'+tag+'/llama-'+tag+'-bin-win-avx2-x64.zip';" +
-          "    console.log('Downloading',url);" +
-          "    const file = fs.createWriteStream('llama-bin.zip');" +
-          "    https.get(url,{headers:{'User-Agent':'node'}},r=>{" +
-          "      if(r.statusCode===302||r.statusCode===301){" +
-          "        https.get(r.headers.location,{headers:{'User-Agent':'node'}},r2=>{r2.pipe(file);file.on('finish',()=>{" +
-          "          execSync('node -e \"const AdmZip=require(\\'adm-zip\\');const z=new AdmZip(\\'llama-bin.zip\\');z.extractAllTo(\\'bin\\',true);\"');" +
-          "          console.log('Done');});});} else {r.pipe(file);file.on('finish',()=>{" +
-          "          fs.mkdirSync('bin',{recursive:true});" +
-          "          execSync('powershell -Command Expand-Archive -Path llama-bin.zip -DestinationPath bin -Force');" +
-          "          console.log('Done');});}});" +
-          "  });" +
-          "}); req.on('error',e=>console.error(e));\""
-        ]
+        message: ["node scripts/download-llama.mjs"]
       }
     },
     // Download the main model (~2.5 GB)
