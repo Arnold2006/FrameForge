@@ -96,14 +96,18 @@
   /* preview strip */
   .img-preview {
     display: none;
-    align-items: center; gap: 10px;
+    flex-direction: column; gap: 8px;
     padding: 10px 16px;
     border-top: 1px solid var(--border);
   }
   .img-preview.has-image { display: flex; }
   .img-preview img {
-    width: 48px; height: 48px; object-fit: cover;
-    border-radius: 6px; border: 1px solid var(--border); flex-shrink: 0;
+    width: 100%; max-height: 280px; object-fit: contain;
+    border-radius: 8px; border: 1px solid var(--border);
+    background: var(--code-bg);
+  }
+  .img-preview .img-meta {
+    display: flex; align-items: center; gap: 8px;
   }
   .img-preview .img-name {
     font-size: 12px; color: var(--muted); flex: 1; min-width: 0;
@@ -239,12 +243,14 @@
       <!-- preview strip (hidden until an image is chosen) -->
       <div class="img-preview" id="imgPreview">
         <img id="imgThumb" src="" alt="preview">
-        <span class="img-name" id="imgName"></span>
-        <button class="img-clear" id="imgClear" title="Remove image">
-          <svg width="13" height="13" viewBox="0 0 13 13" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M2 2l9 9M11 2l-9 9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-          </svg>
-        </button>
+        <div class="img-meta">
+          <span class="img-name" id="imgName"></span>
+          <button class="img-clear" id="imgClear" title="Remove image">
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M2 2l9 9M11 2l-9 9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
 
