@@ -1,6 +1,6 @@
 // Ideoprompt — local Ideogram 4 JSON prompt generator.
 //
-// Spawns llama-server (bundled with node-llama-cpp) as a subprocess with
+// Spawns llama-server (downloaded to app/bin/) as a subprocess with
 // --mmproj so vision input works, then talks to its OpenAI-compatible API.
 // The same normalize → validate pipeline is preserved.
 
@@ -9,7 +9,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { getLlama } from "node-llama-cpp";
 import { normalizeCaption, serializeCaption } from "./src/normalize.mjs";
 import { validateCaption } from "./src/validate.mjs";
 import { SYSTEM_PROMPT, FEW_SHOT } from "./src/prompt.mjs";
@@ -31,62 +30,81 @@ function resolveModels() {
     process.exit(1);
   }
   const files = fs.readdirSync(modelsDir);
+
   const modelFile = process.env.MODEL_PATH
     ? path.resolve(process.env.MODEL_PATH)
     : (() => {
-        const f = files.filter(f => f.toLowerCase().endsWith(".gguf") && !f.startsWith("mmproj")).sort()[0];
+        const f = files
+          .filter(f => f.toLowerCase().endsWith(".gguf") && !f.toLowerCase().startsWith("mmproj"))
+          .sort()[0];
         if (!f) { console.error("No model .gguf found in app/models/"); process.exit(1); }
         return path.join(modelsDir, f);
       })();
+
   const mmprojFile = process.env.MMPROJ_PATH
     ? path.resolve(process.env.MMPROJ_PATH)
     : (() => {
-        const f = files.filter(f => f.startsWith("mmproj") && f.toLowerCase().endsWith(".gguf")).sort()[0];
+        const f = files
+          .filter(f => f.toLowerCase().startsWith("mmproj") && f.toLowerCase().endsWith(".gguf"))
+          .sort()[0];
         return f ? path.join(modelsDir, f) : null;
       })();
+
   return { modelFile, mmprojFile };
 }
 
-// ── spawn llama-server ────────────────────────────────────────────────────────
-async function startLlamaServer(modelFile, mmprojFile) {
-  // Resolve the llama-server binary that ships with node-llama-cpp
-  const llama = await getLlama();
-  const llamaBinDir = path.dirname(llama.llamaCppReleasePath ?? "");
-  // Try a few candidate names/locations
-  const serverBin = path.join(__dirname, "bin", "llama-server.exe");
-if (!fs.existsSync(serverBin)) {
-  throw new Error(`llama-server.exe not found at ${serverBin} — run the install script first`);
-}
+// ── find llama-server binary ──────────────────────────────────────────────────
+function resolveLlamaServer() {
+  // Prefer our downloaded binary in app/bin/
+  const candidates = [
+    path.join(__dirname, "bin", "llama-server.exe"), // Windows (downloaded)
+    path.join(__dirname, "bin", "llama-server"),     // Linux/Mac (downloaded)
   ];
-  const serverBin = candidates.find(c => {
-    try { return fs.existsSync(c); } catch { return false; }
-  }) ?? "llama-server";
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  console.error(
+    "llama-server binary not found in app/bin/.\n" +
+    "Run the install script to download it (scripts/download-llama.mjs)."
+  );
+  process.exit(1);
+}
 
+// ── spawn llama-server ────────────────────────────────────────────────────────
+async function startLlamaServer(serverBin, modelFile, mmprojFile) {
   const args = [
     "--model", modelFile,
     "--ctx-size", String(CONTEXT_SIZE),
     "--port", String(LLAMA_PORT),
     "--host", "127.0.0.1",
     "--no-webui",
-    "--jinja",           // enables proper chat template rendering for Qwen3-VL
+    "--jinja",
     "--flash-attn", "on",
     "--parallel", "1",
-    "--log-disable"
+    "--log-disable",
   ];
+
   if (mmprojFile) {
     args.push("--mmproj", mmprojFile);
     console.log(`Vision enabled: ${path.basename(mmprojFile)}`);
   } else {
-    console.warn("No mmproj file found — image input will not work.");
+    console.warn("No mmproj file found in models/ — image input will not work.");
   }
 
   console.log(`Starting llama-server on port ${LLAMA_PORT}…`);
   const proc = spawn(serverBin, args, { stdio: ["ignore", "pipe", "pipe"] });
+  proc.stdout.on("data", d => process.stdout.write(d));
   proc.stderr.on("data", d => process.stderr.write(d));
+  proc.on("exit", (code) => {
+    if (code !== 0 && code !== null) {
+      console.error(`llama-server exited unexpectedly with code ${code}`);
+      process.exit(1);
+    }
+  });
 
-  // Wait until the server is accepting connections
+  // Wait until the server is accepting connections (up to 120s)
   await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("llama-server startup timeout")), 120_000);
+    const timeout = setTimeout(() => reject(new Error("llama-server startup timeout after 120s")), 120_000);
     const check = async () => {
       try {
         const r = await fetch(`http://127.0.0.1:${LLAMA_PORT}/health`);
@@ -94,15 +112,15 @@ if (!fs.existsSync(serverBin)) {
       } catch {}
       setTimeout(check, 500);
     };
-    proc.on("exit", (code) => { clearTimeout(timeout); reject(new Error(`llama-server exited with code ${code}`)); });
+    proc.on("error", (err) => { clearTimeout(timeout); reject(err); });
     check();
   });
 
-  process.on("exit", () => proc.kill());
+  process.on("exit", () => { try { proc.kill(); } catch {} });
   return proc;
 }
 
-// ── build the few-shot messages array ────────────────────────────────────────
+// ── build messages for llama-server ──────────────────────────────────────────
 function buildMessages(description, imageBase64, lastErrors) {
   const messages = [{ role: "system", content: SYSTEM_PROMPT }];
 
@@ -112,10 +130,13 @@ function buildMessages(description, imageBase64, lastErrors) {
     messages.push({ role: "assistant", content: response });
   }
 
-  // Actual user turn
+  // Build the user turn
+  const errorSuffix = lastErrors.length > 0
+    ? "\n\n(Your previous answer had these problems, fix them: " + lastErrors.join("; ") + ")"
+    : "";
+
   let userContent;
   if (imageBase64) {
-    // Strip data-URL prefix to get bare base64 if present, then re-attach
     const base64Data = imageBase64.replace(/^data:[^;]+;base64,/, "");
     userContent = [
       {
@@ -124,24 +145,21 @@ function buildMessages(description, imageBase64, lastErrors) {
       },
       {
         type: "text",
-        text: description
+        text: (description
           ? `Analyse this image and use it as the subject. Additional context from user: ${description}`
-          : "Analyse this image and generate a detailed Ideogram 4 JSON prompt for it."
+          : "Analyse this image carefully and generate a detailed Ideogram 4 JSON prompt for it."
+        ) + errorSuffix
       }
     ];
-    if (lastErrors.length > 0) {
-      userContent.push({ type: "text", text: "\n\n(Previous attempt had problems, fix them: " + lastErrors.join("; ") + ")" });
-    }
   } else {
-    userContent = description + (lastErrors.length > 0
-      ? "\n\n(Previous attempt had problems, fix them: " + lastErrors.join("; ") + ")"
-      : "");
+    userContent = description + errorSuffix;
   }
+
   messages.push({ role: "user", content: userContent });
   return messages;
 }
 
-// ── call llama-server OpenAI-compatible API ───────────────────────────────────
+// ── call llama-server via OpenAI-compatible streaming API ─────────────────────
 async function callLlamaServer(messages, temperature, onChunk) {
   const res = await fetch(`http://127.0.0.1:${LLAMA_PORT}/v1/chat/completions`, {
     method: "POST",
@@ -182,10 +200,7 @@ async function callLlamaServer(messages, temperature, onChunk) {
       try {
         const evt = JSON.parse(data);
         const chunk = evt.choices?.[0]?.delta?.content ?? "";
-        if (chunk) {
-          fullText += chunk;
-          onChunk(chunk);
-        }
+        if (chunk) { fullText += chunk; onChunk(chunk); }
       } catch {}
     }
   }
@@ -195,6 +210,7 @@ async function callLlamaServer(messages, temperature, onChunk) {
 // ── main generation pipeline ──────────────────────────────────────────────────
 async function generateCaption(description, imageBase64, emit) {
   let lastErrors = [];
+
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     if (attempt > 1) emit({ type: "retry", attempt, errors: lastErrors });
 
@@ -233,6 +249,7 @@ async function generateCaption(description, imageBase64, emit) {
     });
     return;
   }
+
   emit({
     type: "error",
     message: `Could not produce a valid caption after ${MAX_ATTEMPTS} attempts.`,
@@ -240,7 +257,7 @@ async function generateCaption(description, imageBase64, emit) {
   });
 }
 
-// ── HTTP glue (unchanged from original) ──────────────────────────────────────
+// ── HTTP helpers ──────────────────────────────────────────────────────────────
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let body = "";
@@ -258,6 +275,7 @@ function sendJson(res, status, value) {
   res.end(JSON.stringify(value));
 }
 
+// One generation at a time — keeps memory bounded
 let queue = Promise.resolve();
 function enqueue(job) {
   const run = queue.then(job, job);
@@ -267,10 +285,14 @@ function enqueue(job) {
 
 // ── startup ───────────────────────────────────────────────────────────────────
 const { modelFile, mmprojFile } = resolveModels();
-console.log(`Model: ${path.basename(modelFile)}`);
-await startLlamaServer(modelFile, mmprojFile);
+const serverBin = resolveLlamaServer();
+console.log(`Model:  ${path.basename(modelFile)}`);
+console.log(`Binary: ${serverBin}`);
+
+await startLlamaServer(serverBin, modelFile, mmprojFile);
 console.log("llama-server ready.");
 
+// ── HTTP server ───────────────────────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
 
@@ -281,7 +303,6 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "GET" && url.pathname === "/api/health") {
-    // Proxy health from llama-server and enrich it
     try {
       const h = await fetch(`http://127.0.0.1:${LLAMA_PORT}/health`);
       const hj = await h.json();
