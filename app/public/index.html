@@ -76,7 +76,47 @@
     background: transparent; color: var(--fg);
     font: inherit;
   }
-  .bar { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px 10px 16px; }
+
+  /* ── image drop zone ── */
+  .img-zone {
+    position: relative;
+    border-top: 1px solid var(--border);
+  }
+  .img-drop {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px; cursor: pointer;
+    color: var(--muted); font-size: 13px;
+    transition: color 0.15s;
+  }
+  .img-drop:hover { color: var(--fg); }
+  .img-drop svg { flex-shrink: 0; opacity: 0.55; }
+  .img-drop.drag-over { color: var(--fg); background: var(--code-bg); }
+  .img-input { display: none; }
+
+  /* preview strip */
+  .img-preview {
+    display: none;
+    align-items: center; gap: 10px;
+    padding: 10px 16px;
+    border-top: 1px solid var(--border);
+  }
+  .img-preview.has-image { display: flex; }
+  .img-preview img {
+    width: 48px; height: 48px; object-fit: cover;
+    border-radius: 6px; border: 1px solid var(--border); flex-shrink: 0;
+  }
+  .img-preview .img-name {
+    font-size: 12px; color: var(--muted); flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .img-clear {
+    background: transparent; border: 0; cursor: pointer;
+    padding: 4px; color: var(--muted); line-height: 1;
+    border-radius: 4px; flex-shrink: 0;
+  }
+  .img-clear:hover { color: var(--fg); }
+
+  .bar { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px 10px 16px; border-top: 1px solid var(--border); }
   .hint { font-size: 12px; color: var(--muted); }
   button.go {
     border: 0; border-radius: 10px; padding: 8px 18px;
@@ -101,9 +141,6 @@
   .chip:hover { color: var(--fg); border-color: var(--muted); }
   .out { margin-top: 28px; display: none; overflow: hidden; }
   .out.show { display: block; }
-  /* Wide screens: break the result card out of the column and put the
-     layout canvas and the JSON side by side, so dragging a box and the
-     coordinates changing are visible at the same time. */
   @media (min-width: 900px) {
     .out { --outw: min(1100px, calc(100vw - 48px)); width: var(--outw); margin-left: calc((100% - var(--outw)) / 2); }
     .out-body { display: flex; align-items: stretch; }
@@ -182,7 +219,30 @@
   <p class="sub">Get a 100% schema-valid Ideogram 4 JSON prompt, generated locally.</p>
 
   <div class="card">
-    <textarea id="input" placeholder="A cozy bookshop storefront at dusk, warm light spilling onto a cobblestone street…" autofocus></textarea>
+    <textarea id="input" placeholder="A cozy bookshop storefront at dusk, warm light spilling onto a cobblestone street… (optional when uploading an image)" autofocus></textarea>
+
+    <!-- image input row -->
+    <div class="img-zone" id="imgZone">
+      <div class="img-drop" id="imgDrop" title="Drop an image, paste, or click to browse">
+        <svg width="15" height="15" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M7.5 1v9M3.5 6l4-4 4 4M1 11.5v1a1 1 0 001 1h11a1 1 0 001-1v-1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span id="imgDropLabel">Upload image — or drag &amp; drop, paste</span>
+      </div>
+      <input class="img-input" type="file" id="imgInput" accept="image/*">
+
+      <!-- preview strip (hidden until an image is chosen) -->
+      <div class="img-preview" id="imgPreview">
+        <img id="imgThumb" src="" alt="preview">
+        <span class="img-name" id="imgName"></span>
+        <button class="img-clear" id="imgClear" title="Remove image">
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M2 2l9 9M11 2l-9 9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
     <div class="bar">
       <span class="hint">⌘↵ to generate</span>
       <button class="go" id="go"><span class="spinner"></span><span id="goText">Generate</span></button>
@@ -221,9 +281,70 @@ const input = $("input"), go = $("go"), out = $("out"), jsonEl = $("json");
 const badge = $("badge"), meta = $("meta"), copyBtn = $("copy");
 const layoutEl = $("layout"), canvas = $("canvas"), layoutHint = $("layoutHint");
 const HINT_DEFAULT = layoutHint.textContent;
+
+// ── image state ──────────────────────────────────────────────────
+const imgDrop    = $("imgDrop");
+const imgInput   = $("imgInput");
+const imgPreview = $("imgPreview");
+const imgThumb   = $("imgThumb");
+const imgName    = $("imgName");
+const imgClear   = $("imgClear");
+const imgZone    = $("imgZone");
+
+let imageBase64 = null; // null or "data:image/...;base64,..." string
+
+function setImage(file) {
+  if (!file || !file.type.startsWith("image/")) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    imageBase64 = e.target.result; // full data URL
+    imgThumb.src = imageBase64;
+    imgName.textContent = file.name || "pasted image";
+    imgPreview.classList.add("has-image");
+    $("imgDropLabel").textContent = "Replace image";
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearImage() {
+  imageBase64 = null;
+  imgThumb.src = "";
+  imgName.textContent = "";
+  imgPreview.classList.remove("has-image");
+  imgInput.value = "";
+  $("imgDropLabel").textContent = "Upload image — or drag & drop, paste";
+}
+
+// click the drop area → open file picker
+imgDrop.addEventListener("click", () => imgInput.click());
+
+// file picker change
+imgInput.addEventListener("change", () => {
+  if (imgInput.files[0]) setImage(imgInput.files[0]);
+});
+
+// drag-and-drop onto the zone
+imgZone.addEventListener("dragover", (e) => { e.preventDefault(); imgDrop.classList.add("drag-over"); });
+imgZone.addEventListener("dragleave", () => imgDrop.classList.remove("drag-over"));
+imgZone.addEventListener("drop", (e) => {
+  e.preventDefault();
+  imgDrop.classList.remove("drag-over");
+  const f = e.dataTransfer.files[0];
+  if (f) setImage(f);
+});
+
+// global paste (anywhere on the page)
+document.addEventListener("paste", (e) => {
+  const item = Array.from(e.clipboardData.items).find((i) => i.type.startsWith("image/"));
+  if (item) setImage(item.getAsFile());
+});
+
+imgClear.addEventListener("click", (e) => { e.stopPropagation(); clearImage(); });
+
+// ── rest of the original logic ────────────────────────────────────
 let busy = false;
-let current = null; // the validated prompt object — single source of truth for layout + JSON
-let activeBbox = null; // index of the element whose bbox was last touched
+let current = null;
+let activeBbox = null;
 
 function autosize() {
   input.style.height = "auto";
@@ -346,7 +467,6 @@ function renderLayout() {
   canvas.innerHTML = "";
   if (!Array.isArray(els) || !els.length) { layoutEl.style.display = "none"; return; }
   layoutEl.style.display = "";
-  // smaller boxes stack on top so overlapped elements stay grabbable
   const order = els.filter((el) => Array.isArray(el.bbox) && el.bbox.length === 4)
     .sort((a, b) =>
       (b.bbox[2] - b.bbox[0]) * (b.bbox[3] - b.bbox[1]) -
@@ -361,8 +481,8 @@ function renderLayout() {
     const tag = document.createElement("span");
     tag.className = "tag";
     tag.textContent = el.type === "text" && el.text
-      ? "“" + el.text + "”"
-      : String(el.desc || el.type).split(/[,.]/)[0].split(/\s+/).slice(0, 3).join(" ");
+      ? "\u201c" + el.text + "\u201d"
+      : String(el.desc || el.type).split(/[,.]/ )[0].split(/\s+/).slice(0, 3).join(" ");
     d.appendChild(tag);
     const handle = document.createElement("span");
     handle.className = "handle";
@@ -376,7 +496,8 @@ function renderLayout() {
 
 async function generate() {
   const description = input.value.trim();
-  if (!description || busy) return;
+  if (!description && !imageBase64) return;
+  if (busy) return;
   busy = true;
   go.disabled = true;
   go.classList.add("busy");
@@ -394,10 +515,13 @@ async function generate() {
 
   let streamed = "";
   try {
+    const body = { description };
+    if (imageBase64) body.image = imageBase64; // full data URL — server strips the prefix
+
     const res = await fetch("/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ description })
+      body: JSON.stringify(body)
     });
     if (!res.ok) throw new Error((await res.json()).error || res.statusText);
 
