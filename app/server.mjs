@@ -53,11 +53,10 @@ async function startLlamaServer(modelFile, mmprojFile) {
   const llama = await getLlama();
   const llamaBinDir = path.dirname(llama.llamaCppReleasePath ?? "");
   // Try a few candidate names/locations
-  const candidates = [
-    path.join(llamaBinDir, "llama-server"),
-    path.join(llamaBinDir, "llama-server.exe"),
-    path.join(__dirname, "node_modules", ".bin", "llama-server"),
-    "llama-server"
+  const serverBin = path.join(__dirname, "bin", "llama-server.exe");
+if (!fs.existsSync(serverBin)) {
+  throw new Error(`llama-server.exe not found at ${serverBin} — run the install script first`);
+}
   ];
   const serverBin = candidates.find(c => {
     try { return fs.existsSync(c); } catch { return false; }
