@@ -3,23 +3,28 @@ module.exports = {
     bundle: "ai"
   },
   run: [
-    // Install node dependencies (node-llama-cpp ships prebuilt llama.cpp
-    // binaries for macOS/Windows/Linux — no compiler toolchain needed)
     {
       method: "shell.run",
       params: {
         path: "app",
-        message: [
-          "npm install"
-        ]
+        message: ["npm install"]
       }
     },
-    // Download the GGUF model (~2.5GB) into app/models
+    // Download the main model (~2.5 GB)
     {
       method: "hf.download",
       params: {
         path: "app",
-        "_": ["unsloth/Qwen3-4B-Instruct-2507-GGUF", "Qwen3-4B-Instruct-2507-Q4_K_M.gguf"],
+        "_": ["noctrex/Huihui-Qwen3-VL-4B-Instruct-abliterated-GGUF", "Huihui-Qwen3-VL-4B-Instruct-abliterated-Q4_K_M.gguf"],
+        "local-dir": "models"
+      }
+    },
+    // Download the vision projector (~836 MB) — required for image input
+    {
+      method: "hf.download",
+      params: {
+        path: "app",
+        "_": ["noctrex/Huihui-Qwen3-VL-4B-Instruct-abliterated-GGUF", "mmproj-F16.gguf"],
         "local-dir": "models"
       }
     }
