@@ -184,7 +184,7 @@
   .err { color: var(--red); font-size: 13px; padding: 14px 16px; }
   .layout { padding: 16px 16px 0; border-bottom: 1px solid var(--border); }
   .canvas {
-    position: relative; width: 100%; max-width: 360px; aspect-ratio: 1 / 1;
+    position: relative; width: 100%; max-width: 360px; aspect-ratio: 1 / 1; /* updated by JS */
     margin: 0 auto; background: #1a1a2e;
     border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
     background-image:
@@ -276,6 +276,27 @@
     resize: vertical;
   }
   .steer-body textarea:focus { outline: none; border-color: var(--muted); }
+
+  /* ── aspect ratio selector ── */
+  .ar-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 16px; border-top: 1px solid var(--border);
+    overflow-x: auto; scrollbar-width: none;
+  }
+  .ar-row::-webkit-scrollbar { display: none; }
+  .ar-label { font-size: 11px; color: var(--muted); flex-shrink: 0; }
+  .ar-btn {
+    font: 12px/1 inherit; color: var(--muted);
+    background: transparent; border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 9px; cursor: pointer;
+    flex-shrink: 0; transition: color 0.15s, border-color 0.15s, background 0.15s;
+    white-space: nowrap;
+  }
+  .ar-btn:hover { color: var(--fg); border-color: var(--muted); }
+  .ar-btn.active {
+    color: var(--accent-fg); background: var(--accent);
+    border-color: var(--accent);
+  }
 </style>
 </head>
 <body>
@@ -331,6 +352,19 @@
     <div class="steer-body" id="steerBody">
       <div class="steer-label">Appended to system prompt — describe mood, style, aesthetic, era…</div>
       <textarea id="steerInput" placeholder="e.g. Always prefer cinematic lighting, a dark moody aesthetic, and a film grain texture. Lean toward muted earth tones and chiaroscuro contrast."></textarea>
+    </div>
+
+    <!-- aspect ratio selector -->
+    <div class="ar-row">
+      <span class="ar-label">Ratio</span>
+      <button class="ar-btn active" data-ar="1:1"   data-w="1000" data-h="1000">1:1</button>
+      <button class="ar-btn"        data-ar="4:3"   data-w="1000" data-h="750" >4:3</button>
+      <button class="ar-btn"        data-ar="3:2"   data-w="1000" data-h="667" >3:2</button>
+      <button class="ar-btn"        data-ar="16:9"  data-w="1000" data-h="563" >16:9</button>
+      <button class="ar-btn"        data-ar="21:9"  data-w="1000" data-h="429" >21:9</button>
+      <button class="ar-btn"        data-ar="2:3"   data-w="667"  data-h="1000">2:3</button>
+      <button class="ar-btn"        data-ar="3:4"   data-w="750"  data-h="1000">3:4</button>
+      <button class="ar-btn"        data-ar="9:16"  data-w="563"  data-h="1000">9:16</button>
     </div>
 
     <div class="bar">
@@ -406,6 +440,37 @@ steerToggle.addEventListener("click", () => {
 steerInput.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === "Enter") generate();
 });
+
+// ── aspect ratio ─────────────────────────────────────────────────
+const AR_PRESETS = {
+  "1:1":  { w: 1000, h: 1000 },
+  "4:3":  { w: 1000, h: 750  },
+  "3:2":  { w: 1000, h: 667  },
+  "16:9": { w: 1000, h: 563  },
+  "21:9": { w: 1000, h: 429  },
+  "2:3":  { w: 667,  h: 1000 },
+  "3:4":  { w: 750,  h: 1000 },
+  "9:16": { w: 563,  h: 1000 },
+};
+let currentAR = "1:1";
+
+document.querySelectorAll(".ar-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".ar-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    currentAR = btn.dataset.ar;
+    // Update canvas display aspect ratio
+    const { w, h } = AR_PRESETS[currentAR];
+    canvas.style.aspectRatio = w + " / " + h;
+    canvas.style.maxWidth = h > w ? (360 * w / h) + "px" : "360px";
+    // Re-render layout boxes if we have a current prompt
+    if (current) renderLayout();
+  });
+});
+
+function arGridSize() {
+  return AR_PRESETS[currentAR] || { w: 1000, h: 1000 };
+}
 
 // ── image state ──────────────────────────────────────────────────
 const imgDrop    = $("imgDrop");
@@ -538,10 +603,11 @@ function revealActiveBbox() {
 
 function positionBox(d, bbox) {
   const [y0, x0, y1, x1] = bbox;
-  d.style.top = y0 / 10 + "%";
-  d.style.left = x0 / 10 + "%";
-  d.style.height = (y1 - y0) / 10 + "%";
-  d.style.width = (x1 - x0) / 10 + "%";
+  const { w, h } = arGridSize();
+  d.style.top    = (y0 / h * 100) + "%";
+  d.style.left   = (x0 / w * 100) + "%";
+  d.style.height = ((y1 - y0) / h * 100) + "%";
+  d.style.width  = ((x1 - x0) / w * 100) + "%";
 }
 
 function attachDrag(d, handle, el) {
@@ -560,17 +626,20 @@ function attachDrag(d, handle, el) {
   });
   d.addEventListener("pointermove", (e) => {
     if (!mode) return;
-    const scale = 1000 / canvas.getBoundingClientRect().width;
-    const dx = Math.round((e.clientX - sx) * scale);
-    const dy = Math.round((e.clientY - sy) * scale);
+    const rect = canvas.getBoundingClientRect();
+    const { w: gw, h: gh } = arGridSize();
+    const scaleX = gw / rect.width;
+    const scaleY = gh / rect.height;
+    const dx = Math.round((e.clientX - sx) * scaleX);
+    const dy = Math.round((e.clientY - sy) * scaleY);
     if (mode === "move") {
-      const h = start[2] - start[0], w = start[3] - start[1];
-      const y0 = clamp(start[0] + dy, 0, 1000 - h);
-      const x0 = clamp(start[1] + dx, 0, 1000 - w);
-      el.bbox = [y0, x0, y0 + h, x0 + w];
+      const bh = start[2] - start[0], bw = start[3] - start[1];
+      const y0 = clamp(start[0] + dy, 0, gh - bh);
+      const x0 = clamp(start[1] + dx, 0, gw - bw);
+      el.bbox = [y0, x0, y0 + bh, x0 + bw];
     } else {
-      const y1 = clamp(start[2] + dy, start[0] + 10, 1000);
-      const x1 = clamp(start[3] + dx, start[1] + 10, 1000);
+      const y1 = clamp(start[2] + dy, start[0] + 10, gh);
+      const x1 = clamp(start[3] + dx, start[1] + 10, gw);
       el.bbox = [start[0], start[1], y1, x1];
     }
     positionBox(d, el.bbox);
@@ -658,7 +727,7 @@ async function generate() {
   let streamed = "";
   try {
     const steering = steerInput.value.trim();
-    const body = { description, mode, ...(steering ? { steering } : {}) };
+    const body = { description, mode, aspectRatio: currentAR, ...(steering ? { steering } : {}) };
     if (imageBase64) body.image = imageBase64; // full data URL — server strips the prefix
 
     const res = await fetch("/api/generate", {
