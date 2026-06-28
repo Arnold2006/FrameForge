@@ -255,30 +255,6 @@
   }
   .plain-out.show { display: block; }
 
-  /* ── steering / system prompt addon ── */
-  .steer-toggle {
-    display: flex; align-items: center; gap: 8px;
-    padding: 9px 16px; border-top: 1px solid var(--border);
-    cursor: pointer; color: var(--muted); font-size: 12px;
-    user-select: none; transition: color 0.15s;
-  }
-  .steer-toggle:hover { color: var(--fg); }
-  .steer-toggle svg { transition: transform 0.2s; flex-shrink: 0; }
-  .steer-toggle.open svg { transform: rotate(90deg); }
-  .steer-body {
-    display: none; padding: 0 16px 12px;
-    border-top: 1px solid var(--border);
-  }
-  .steer-body.open { display: block; }
-  .steer-label { font-size: 11px; color: var(--muted); margin-bottom: 6px; margin-top: 10px; }
-  .steer-body textarea {
-    min-height: 64px; max-height: 160px; font-size: 13px;
-    border: 1px solid var(--border); border-radius: 8px;
-    padding: 8px 10px; background: var(--bg); color: var(--fg);
-    resize: vertical;
-  }
-  .steer-body textarea:focus { outline: none; border-color: var(--muted); }
-
   /* ── aspect ratio selector ── */
   .ar-row {
     display: flex; align-items: center; gap: 8px;
@@ -361,19 +337,6 @@
         </div>
       </div>
     </div>
-
-    <!-- steering / system prompt addon -->
-    <div class="steer-toggle" id="steerToggle">
-      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M3 1l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-      <span>Steer the style</span>
-    </div>
-    <div class="steer-body" id="steerBody">
-      <div class="steer-label">Appended to system prompt — describe mood, style, aesthetic, era…</div>
-      <textarea id="steerInput" placeholder="e.g. Always prefer cinematic lighting, a dark moody aesthetic, and a film grain texture. Lean toward muted earth tones and chiaroscuro contrast."></textarea>
-    </div>
-
     <!-- aspect ratio selector -->
     <div class="ar-row">
       <span class="ar-label">Ratio</span>
@@ -443,53 +406,6 @@ const input = $("input"), go = $("go"), out = $("out"), jsonEl = $("json");
 const badge = $("badge"), meta = $("meta"), copyBtn = $("copy");
 const layoutEl = $("layout"), canvas = $("canvas"), layoutHint = $("layoutHint");
 const HINT_DEFAULT = layoutHint.textContent;
-
-// ── steering toggle ─────────────────────────────────────────────
-const steerToggle = $("steerToggle");
-const steerBody   = $("steerBody");
-const steerInput  = $("steerInput");
-
-steerToggle.addEventListener("click", () => {
-  const open = steerBody.classList.toggle("open");
-  steerToggle.classList.toggle("open", open);
-  if (open) steerInput.focus();
-});
-
-// Also submit on ⌘↵ inside the steer textarea
-steerInput.addEventListener("keydown", (e) => {
-  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") generate();
-});
-
-// ── aspect ratio ─────────────────────────────────────────────────
-const AR_PRESETS = {
-  "1:1":  { w: 1000, h: 1000 },
-  "4:3":  { w: 1000, h: 750  },
-  "3:2":  { w: 1000, h: 667  },
-  "16:9": { w: 1000, h: 563  },
-  "21:9": { w: 1000, h: 429  },
-  "2:3":  { w: 667,  h: 1000 },
-  "3:4":  { w: 750,  h: 1000 },
-  "9:16": { w: 563,  h: 1000 },
-};
-let currentAR = "1:1";
-
-document.querySelectorAll(".ar-btn").forEach(btn => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".ar-btn").forEach(b => b.classList.remove("active"));
-    btn.classList.add("active");
-    currentAR = btn.dataset.ar;
-    // Update canvas display aspect ratio
-    const { w, h } = AR_PRESETS[currentAR];
-    canvas.style.aspectRatio = w + " / " + h;
-    canvas.style.maxWidth = h > w ? (360 * w / h) + "px" : "360px";
-    // Re-render layout boxes if we have a current prompt
-    if (current) renderLayout();
-  });
-});
-
-function arGridSize() {
-  return AR_PRESETS[currentAR] || { w: 1000, h: 1000 };
-}
 
 // ── image state ──────────────────────────────────────────────────
 const imgDrop    = $("imgDrop");
@@ -746,8 +662,7 @@ async function generate() {
 
   let streamed = "";
   try {
-    const steering = steerInput.value.trim();
-    const body = { description, mode, aspectRatio: currentAR, ...(steering ? { steering } : {}) };
+    const body = { description, mode, aspectRatio: currentAR };
     if (imageBase64) body.image = imageBase64; // full data URL — server strips the prefix
 
     const res = await fetch("/api/generate", {
