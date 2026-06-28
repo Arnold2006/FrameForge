@@ -137,8 +137,9 @@ function buildMessages(description, imageBase64, lastErrors, steering = "", aspe
   // Scale the 1000x1000 grid to match the target aspect ratio
   const gridW = arW >= arH ? 1000 : Math.round(1000 * arW / arH);
   const gridH = arH >= arW ? 1000 : Math.round(1000 * arH / arW);
-  const arNote = `\n\nTarget aspect ratio: ${aspectRatio} (bbox grid is ${gridW}×${gridH}, x in [0,${gridW}], y in [0,${gridH}]). Place and size all bboxes to suit this canvas shape.`;
-  const sysPrompt = (steering ? SYSTEM_PROMPT + "\n\nAdditional style guidance:\n" + steering : SYSTEM_PROMPT) + arNote;
+  const arNote = `\n\nTarget aspect ratio: ${aspectRatio} (bbox grid is ${gridW}\u00d7${gridH}, x in [0,${gridW}], y in [0,${gridH}]). Place and size all bboxes to suit this canvas shape.`;
+  const styleNote = `\n\nYou MUST always include the "style_description" object in your output. It is required, never optional. Choose either the photograph variant (with fields: aesthetics, lighting, photo, medium="photograph", color_palette) or the art variant (with fields: aesthetics, lighting, medium, art_style, color_palette). Always populate all fields with rich, specific values. Never omit style_description.`;
+  const sysPrompt = (steering ? SYSTEM_PROMPT + "\n\nAdditional style guidance:\n" + steering : SYSTEM_PROMPT) + styleNote + arNote;
   const messages = [{ role: "system", content: sysPrompt }];
 
   // Few-shot examples (text only)
