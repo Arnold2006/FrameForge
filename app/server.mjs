@@ -16,6 +16,16 @@ import { GENERATION_SCHEMA } from "./src/generation-schema.mjs";
 import { IDEOGRAM_SCHEMA } from "./src/ideogram-schema.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const PLAIN_SYSTEM_PROMPT = `You are an expert prompt engineer for text-to-image AI models.
+When given a description or reference image, write a single rich plain-text prompt optimised for models like Flux, SDXL, or similar diffusion models.
+
+Rules:
+- Output ONLY the prompt text itself — no preamble, no explanation, no quotes, no markdown
+- Be highly descriptive: subject, style, lighting, mood, color palette, camera/lens feel, era
+- Use natural flowing prose mixed with comma-separated descriptive phrases
+- Aim for 60-120 words
+- Do not mention Ideogram, JSON, or any schema`;
 const PORT = Number(process.env.PORT) || 8123;
 const HOST = "127.0.0.1";
 const LLAMA_PORT = Number(process.env.LLAMA_PORT) || 8124;
@@ -160,6 +170,25 @@ function buildMessages(description, imageBase64, lastErrors) {
   return messages;
 }
 
+// ── build messages for plain text mode ───────────────────────────────────────
+function buildPlainMessages(description, imageBase64) {
+  const messages = [{ role: "system", content: PLAIN_SYSTEM_PROMPT }];
+  let userContent;
+  if (imageBase64) {
+    const base64Data = imageBase64.replace(/^data:[^;]+;base64,/, "");
+    userContent = [
+      { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Data}` } },
+      { type: "text", text: description
+          ? `Analyse this image and write a prompt for it. Extra context: ${description}`
+          : "Analyse this image and write a detailed text-to-image prompt for it." }
+    ];
+  } else {
+    userContent = `Write a text-to-image prompt for: ${description}`;
+  }
+  messages.push({ role: "user", content: userContent });
+  return messages;
+}
+
 // ── call llama-server via OpenAI-compatible streaming API ─────────────────────
 async function callLlamaServer(messages, temperature, onChunk) {
   const res = await fetch(`http://127.0.0.1:${LLAMA_PORT}/v1/chat/completions`, {
@@ -208,6 +237,68 @@ async function callLlamaServer(messages, temperature, onChunk) {
   return fullText;
 }
 
+// ── plain text streaming call (no grammar constraint) ────────────────────────
+async function callLlamaServerPlain(messages, onChunk) {
+  const res = await fetch(`http://127.0.0.1:${LLAMA_PORT}/v1/chat/completions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "local",
+      messages,
+      temperature: 0.8,
+      max_tokens: 512,
+      stream: true
+    })
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`llama-server error ${res.status}: ${err}`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "", fullText = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop();
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const data = line.slice(6).trim();
+      if (data === "[DONE]") continue;
+      try {
+        const evt = JSON.parse(data);
+        const chunk = evt.choices?.[0]?.delta?.content ?? "";
+        if (chunk) { fullText += chunk; onChunk(chunk); }
+      } catch {}
+    }
+  }
+  return fullText.trim();
+}
+
+// ── plain text generation pipeline ───────────────────────────────────────────
+async function generatePlain(description, imageBase64, emit) {
+  const started = Date.now();
+  const messages = buildPlainMessages(description, imageBase64);
+  let text;
+  try {
+    text = await callLlamaServerPlain(
+      messages,
+      (chunk) => emit({ type: "chunk", text: chunk })
+    );
+  } catch (err) {
+    emit({ type: "error", message: String(err?.message || err) });
+    return;
+  }
+  emit({
+    type: "done",
+    mode: "plain",
+    text,
+    duration_ms: Date.now() - started
+  });
+}
+
 // ── main generation pipeline ──────────────────────────────────────────────────
 async function generateCaption(description, imageBase64, emit) {
   let lastErrors = [];
@@ -242,6 +333,7 @@ async function generateCaption(description, imageBase64, emit) {
 
     emit({
       type: "done",
+      mode: "ideogram",
       prompt: normalized.value,
       prompt_compact: serializeCaption(normalized.value),
       valid: true,
@@ -325,12 +417,12 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/api/generate") {
-    let description, imageBase64 = null;
+    let description, imageBase64 = null, reqMode = "ideogram";
     try {
       const body = JSON.parse(await readBody(req));
       description = typeof body.description === "string" ? body.description.trim() : "";
-      if (typeof body.image === "string" && body.image.length > 0)
-        imageBase64 = body.image;
+      if (typeof body.image === "string" && body.image.length > 0) imageBase64 = body.image;
+      if (body.mode === "plain") reqMode = "plain";
     } catch {
       sendJson(res, 400, { error: "invalid JSON body" });
       return;
@@ -347,7 +439,11 @@ const server = http.createServer(async (req, res) => {
     });
     const emit = (event) => res.write(JSON.stringify(event) + "\n");
     try {
-      await enqueue(() => generateCaption(description, imageBase64, emit));
+      if (reqMode === "plain") {
+        await enqueue(() => generatePlain(description, imageBase64, emit));
+      } else {
+        await enqueue(() => generateCaption(description, imageBase64, emit));
+      }
     } catch (err) {
       emit({ type: "error", message: String(err?.message || err) });
     }
