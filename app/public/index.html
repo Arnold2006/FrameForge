@@ -218,6 +218,22 @@
   footer { margin-top: 48px; text-align: center; font-size: 12px; color: var(--muted); }
   footer a { color: inherit; }
 
+  /* ── editable prompt area ── */
+  .edit-area {
+    display: none; width: 100%;
+    padding: 16px; border: 0; outline: 0; resize: vertical;
+    background: var(--code-bg); color: var(--fg);
+    font: 12.5px/1.55 ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    white-space: pre-wrap; word-break: break-word;
+    border-radius: 0 0 14px 14px;
+    min-height: 200px; max-height: min(600px, 70vh);
+    box-sizing: border-box;
+  }
+  .edit-area.show { display: block; }
+  @media (min-width: 900px) {
+    .edit-area { border-radius: 0; }
+  }
+
   /* ── mode toggle ── */
   .mode-toggle {
     display: flex; align-items: center; justify-content: center;
@@ -366,6 +382,7 @@
       <span class="badge working" id="badge">generating…</span>
       <div class="out-actions">
         <span class="meta" id="meta"></span>
+        <button class="copy" id="editBtn" style="display:none">Edit</button>
         <button class="copy" id="copy" style="display:none">Copy</button>
       </div>
     </div>
@@ -376,6 +393,7 @@
       </div>
       <pre id="json"></pre>
       <div class="plain-out" id="plainOut"></div>
+      <textarea class="edit-area" id="editArea" spellcheck="false"></textarea>
     </div>
   </div>
 
@@ -393,6 +411,7 @@ const plainOut      = $("plainOut");
 let mode = "ideogram"; // "ideogram" | "plain"
 
 toggleTrack.addEventListener("click", () => {
+  if (isEditing) exitEditMode();
   mode = mode === "ideogram" ? "plain" : "ideogram";
   toggleTrack.classList.toggle("plain", mode === "plain");
   labelIdeogram.classList.toggle("active", mode === "ideogram");
@@ -404,6 +423,7 @@ toggleTrack.addEventListener("click", () => {
 });
 const input = $("input"), go = $("go"), out = $("out"), jsonEl = $("json");
 const badge = $("badge"), meta = $("meta"), copyBtn = $("copy");
+const editBtn = $("editBtn"), editArea = $("editArea");
 const layoutEl = $("layout"), canvas = $("canvas"), layoutHint = $("layoutHint");
 const HINT_DEFAULT = layoutHint.textContent;
 
@@ -484,6 +504,53 @@ let busy = false;
 let current = null;
 let plainText = null;
 let activeBbox = null;
+let isEditing = false;
+
+// ── edit mode ────────────────────────────────────────────────────
+function enterEditMode() {
+  isEditing = true;
+  editArea.value = mode === "plain"
+    ? (plainText || "")
+    : JSON.stringify(current, null, 2);
+  editArea.classList.add("show");
+  jsonEl.style.display = "none";
+  plainOut.classList.remove("show");
+  layoutEl.style.display = "none";
+  editBtn.textContent = "Done";
+}
+
+function exitEditMode() {
+  isEditing = false;
+  editArea.classList.remove("show");
+  editBtn.textContent = "Edit";
+  if (mode === "plain") {
+    plainText = editArea.value;
+    plainOut.textContent = plainText;
+    plainOut.classList.add("show");
+    jsonEl.style.display = "none";
+  } else {
+    try {
+      current = JSON.parse(editArea.value);
+      jsonEl.style.display = "";
+      renderJsonNow();
+      jsonEl.scrollTop = 0;
+      renderLayout();
+      setBadge("valid", "✓ Valid Ideogram 4 prompt");
+    } catch (e) {
+      // Stay in edit mode so the user can fix the JSON
+      isEditing = true;
+      editArea.classList.add("show");
+      editBtn.textContent = "Done";
+      setBadge("invalid", "Invalid JSON — fix and click Done");
+      return;
+    }
+  }
+}
+
+editBtn.addEventListener("click", () => {
+  if (isEditing) exitEditMode();
+  else enterEditMode();
+});
 
 function autosize() {
   input.style.height = "auto";
@@ -664,6 +731,11 @@ async function generate() {
   jsonEl.className = "";
   meta.textContent = "";
   copyBtn.style.display = "none";
+  editBtn.style.display = "none";
+  isEditing = false;
+  editArea.classList.remove("show");
+  editArea.value = "";
+  editBtn.textContent = "Edit";
   current = null;
   plainText = null;
   activeBbox = null;
@@ -708,6 +780,7 @@ async function generate() {
         } else if (event.type === "done") {
           meta.textContent = (event.duration_ms / 1000).toFixed(1) + "s";
           copyBtn.style.display = "";
+          editBtn.style.display = "";
           if (event.mode === "plain") {
             plainText = event.text;
             plainOut.textContent = plainText;
@@ -716,7 +789,8 @@ async function generate() {
             layoutEl.style.display = "none";
             setBadge("valid", "✓ Plain text prompt");
             copyBtn.onclick = async () => {
-              await navigator.clipboard.writeText(plainText);
+              const text = isEditing ? editArea.value : plainText;
+              await navigator.clipboard.writeText(text);
               copyBtn.textContent = "Copied";
               setTimeout(() => (copyBtn.textContent = "Copy"), 1500);
             };
@@ -728,7 +802,8 @@ async function generate() {
             renderLayout();
             setBadge("valid", "✓ Valid Ideogram 4 prompt");
             copyBtn.onclick = async () => {
-              await navigator.clipboard.writeText(JSON.stringify(current, null, 2));
+              const text = isEditing ? editArea.value : JSON.stringify(current, null, 2);
+              await navigator.clipboard.writeText(text);
               copyBtn.textContent = "Copied";
               setTimeout(() => (copyBtn.textContent = "Copy"), 1500);
             };
