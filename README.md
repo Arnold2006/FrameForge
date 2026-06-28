@@ -1,90 +1,117 @@
-# Ideoprompt
+# FrameForge
 
 ![screenshot.png](screenshot.png)
 
-Describe an image in plain English and get an **Ideogram 4 structured JSON prompt** that is **guaranteed to validate** against the official Ideogram 4 caption schema.
+Describe an image — or upload a reference photo — and get a structured **Ideogram 4 JSON prompt** or a **plain text prompt** for models like Flux and SDXL, generated entirely on your machine.
 
-Everything runs locally: the LLM (Qwen3-4B-Instruct-2507) is embedded in the app via [node-llama-cpp](https://node-llama-cpp.withcat.ai/) (llama.cpp bindings).
+FrameForge runs locally: the vision-language model (Huihui-Qwen3-VL-4B abliterated) is served via [llama-server](https://github.com/ggml-org/llama.cpp) with full GPU acceleration (CUDA 12.4).
+
+---
 
 # What it does
 
-Ideogram 4 was trained on structured JSON captions, and feeding it a JSON caption gives far better controllability (spatial layout via bounding boxes, exact text rendering, color palette conditioning) than plain text — but the JSON has strict rules (required fields, strict key order, `[y_min, x_min, y_max, x_max]` 0–1000 bboxes, uppercase `#RRGGBB` colors, photo vs. art-style variants) and hand-writing it is error-prone.
+Ideogram 4 was trained on structured JSON captions. Feeding it a JSON caption gives far better controllability — spatial layout via bounding boxes, exact text rendering, color palette conditioning — than plain text. But the JSON has strict rules (required fields, strict key order, `[y_min, x_min, y_max, x_max]` 0–1000 bboxes, uppercase `#RRGGBB` hex colors, photo vs. art-style variants) and hand-writing it is error-prone.
 
-Ideoprompt converts a plain description into a valid caption with a three-layer guarantee, so the output is valid by construction rather than by luck:
+FrameForge converts a plain description or reference image into a valid caption with a three-layer guarantee:
 
-1. **Grammar-constrained decoding** — the model's token sampling is constrained by a GBNF grammar compiled from the schema; it *cannot* emit malformed JSON, wrong keys, wrong key order, or wrong types.
-2. **Deterministic normalization** — hex colors are uppercased and de-duplicated, bboxes clamped to 0–1000 and ordered, palette sizes capped (16 style / 5 per element), keys re-serialized in the canonical order from the official docs.
-3. **Validation gate** — the result must pass AJV validation against the complete official JSON Schema plus key-order checks before it is shown. On the rare failure, the app regenerates once automatically with the errors in context.
+1. **Grammar-constrained decoding** — token sampling is constrained by a JSON schema grammar; the model cannot emit malformed JSON, wrong keys, wrong types, or skip required fields like `style_description`.
+2. **Deterministic normalization** — hex colors are uppercased and de-duplicated, bboxes clamped and ordered, palette sizes capped, keys re-serialized in canonical order.
+3. **Validation gate** — the result must pass AJV validation against the complete official JSON Schema before it is shown. On the rare failure the app regenerates automatically with the errors in context.
 
 Schema reference: [Ideogram 4 prompting docs](https://github.com/ideogram-oss/ideogram4/blob/main/docs/prompting.md).
 
+---
+
+# Features
+
+- **Image input** — drag & drop, paste from clipboard, or upload a reference image; the vision model analyses it and generates a prompt based on what it sees
+- **Two output modes** — toggle between a structured Ideogram 4 JSON prompt and a plain text prompt optimised for Flux / SDXL style models
+- **Interactive bbox editor** — drag elements to move them, pull the corner handle to resize; coordinates update live in the JSON view
+- **Aspect ratio selector** — choose from 8 common presets (1:1, 4:3, 3:2, 16:9, 21:9, 2:3, 3:4, 9:16); the canvas reshapes instantly and the model is informed of the target ratio
+- **Style steering** — expand the "Steer the style" panel and describe a mood, aesthetic, or era; the text is appended to the system prompt without breaking schema constraints
+- **GPU accelerated** — runs on CUDA 12.4; an RTX 3090 generates a prompt in roughly 5–15 seconds
+
+---
+
 # Install
 
-## 1. One Click Install
+## 1. One-click install (recommended)
 
-[Recommended] You can easily run this with one click.
+Install [Pinokio](https://pinokio.co), open this project, and click **Install**. Pinokio downloads Node.js dependencies, the llama-server binary, the model (~2.5 GB), and the vision projector (~836 MB) automatically, then gives you one-click **Start**, **Update**, and **Reset** buttons.
 
-Install [Pinokio](https://pinokio.co), then open this project in Pinokio and click **Install**. Pinokio takes care of everything — Node.js, npm dependencies, and the model download — and gives you one-click **Start**, **Update**, and **Reset** buttons.
+## 2. Manual install
 
-## 2. Manually Install
-
-Or if you want to install manually in terminal:
-
-Prerequisites: [Node.js](https://nodejs.org) ≥ 20 and the [Hugging Face CLI](https://huggingface.co/docs/huggingface_hub/guides/cli) (or any way to download a file from Hugging Face).
+Prerequisites: [Node.js](https://nodejs.org) ≥ 20.
 
 ```bash
-# 1. Install dependencies (node-llama-cpp ships prebuilt llama.cpp binaries
-#    for macOS/Windows/Linux — no compiler toolchain needed)
 cd app
+
+# 1. Install Node dependencies
 npm install
 
-# 2. Download the model (~2.5 GB) into app/models/
-hf download unsloth/Qwen3-4B-Instruct-2507-GGUF Qwen3-4B-Instruct-2507-Q4_K_M.gguf --local-dir models
+# 2. Download llama-server binary (CUDA 12.4 build for Windows)
+node scripts/download-llama.mjs
 
-# 3. Start the server
+# 3. Download the model and vision projector
+hf download noctrex/Huihui-Qwen3-VL-4B-Instruct-abliterated-GGUF \
+  Huihui-Qwen3-VL-4B-Instruct-abliterated-Q4_K_M.gguf --local-dir models
+
+hf download noctrex/Huihui-Qwen3-VL-4B-Instruct-abliterated-GGUF \
+  mmproj-F16.gguf --local-dir models
+
+# 4. Start the server
 node server.mjs
 ```
 
-Then open http://127.0.0.1:8123 in your browser. To use a different port or model, set `PORT` / `MODEL_PATH` (see [Configuration](#configuration)).
+Then open http://127.0.0.1:8123.
 
-If you don't have the Hugging Face CLI, this direct download works too:
-
-```bash
-mkdir -p models
-curl -L -o models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf \
-  https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf
-```
+---
 
 # How to use
 
-1. **Start** the app (Pinokio's **Start** button, or `node server.mjs` from `app/` if installed manually) — the model loads (GPU via Metal/CUDA/Vulkan when available, CPU otherwise) and the web UI opens.
-2. Type a description (e.g. *“A flat vector poster for a synthwave festival called "NEON HORIZON"”*) and press **Generate** (or ⌘↵).
-3. When the **✓ Valid Ideogram 4 prompt** badge appears, a **layout preview** shows each element's bounding box on the 0–1000 canvas. Drag a box to move it, or pull its bottom-right corner to resize — the `bbox` coordinates in the JSON update live (clamped to the canvas, so the prompt stays schema-valid).
-4. Click **Copy** to copy the compact JSON — including any layout edits — and paste it as your Ideogram 4 prompt.
+1. **Start** the app — llama-server loads the model onto your GPU and the web UI opens.
+2. Optionally **upload a reference image** by dragging it onto the card, pasting from clipboard, or clicking the upload row.
+3. Type an optional description, choose a **mode** (Ideogram 4 JSON or Plain text) and an **aspect ratio**, then click **Generate**.
+4. When the **✓ Valid Ideogram 4 prompt** badge appears, the **bbox editor** shows each element's bounding box on the canvas. Drag to move, pull the corner to resize — coordinates update live.
+5. Optionally expand **Steer the style** to add mood or aesthetic guidance before regenerating.
+6. Click **Copy** to copy the prompt and paste it directly into Ideogram or your preferred T2I model.
 
 Tips:
 - Put text you want rendered in the image inside "double quotes" — it is copied into `text` elements literally.
-- Name a medium ("photo", "watercolor", "pixel art", "logo"...) to steer `style_description`; otherwise the app picks the most natural one.
-- Generation takes roughly 20–60 s on Apple Silicon / a modern GPU, longer on CPU-only machines.
+- Name a medium ("photo", "watercolor", "pixel art", "logo") to steer `style_description`.
+- The model always populates `style_description` (aesthetics, lighting, medium, color palette) — check this section first when tweaking results.
+
+---
 
 # API
 
-The server exposes a small HTTP API on `127.0.0.1` (the port is assigned by Pinokio; it is shown in the browser address bar, `8123` is the default when run manually).
+The server runs on `127.0.0.1:8123` (or the port assigned by Pinokio).
 
 ## Endpoints
 
 | Method | Path | Description |
-| --- | --- | --- |
-| `POST` | `/api/generate` | Body `{"description": "..."}`. Streams NDJSON events: `{"type":"chunk","text":...}` while generating, then one final `{"type":"done","prompt":{...},"prompt_compact":"...","valid":true,"attempts":1,"duration_ms":...}` (or `{"type":"error",...}`). |
-| `GET` | `/api/health` | `{"status":"ok","model":"<model>.gguf","gpu":"metal"}` — only responds once the model is loaded. |
-| `GET` | `/api/schema` | The full Ideogram 4 JSON Schema used for validation. |
+|--------|------|-------------|
+| `POST` | `/api/generate` | Body: `{"description":"...","image":"<base64>","mode":"ideogram\|plain","aspectRatio":"16:9","steering":"..."}`. Streams NDJSON events. |
+| `GET` | `/api/health` | `{"status":"ok","model":"...","mmproj":"...","vision":true}` |
+| `GET` | `/api/schema` | Full Ideogram 4 JSON Schema used for validation. |
+
+### Streamed events
+
+```
+{"type":"chunk","text":"..."}          — token stream while generating
+{"type":"retry","attempt":2,...}       — automatic retry on validation failure
+{"type":"done","mode":"ideogram","prompt":{...},"prompt_compact":"...","valid":true,"duration_ms":4201}
+{"type":"done","mode":"plain","text":"...","duration_ms":2109}
+{"type":"error","message":"..."}
+```
 
 ## curl
 
 ```bash
 curl -s -X POST http://127.0.0.1:8123/api/generate \
   -H "Content-Type: application/json" \
-  -d '{"description": "A cozy bookshop storefront at dusk"}' | tail -1 | jq .prompt
+  -d '{"description": "A cozy bookshop at dusk", "mode": "ideogram", "aspectRatio": "16:9"}' \
+  | tail -1 | jq .prompt
 ```
 
 ## JavaScript
@@ -93,12 +120,16 @@ curl -s -X POST http://127.0.0.1:8123/api/generate \
 const res = await fetch("http://127.0.0.1:8123/api/generate", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ description: "A cozy bookshop storefront at dusk" })
+  body: JSON.stringify({
+    description: "A cozy bookshop at dusk",
+    mode: "ideogram",
+    aspectRatio: "16:9",
+    steering: "warm amber tones, film photography feel"
+  })
 });
 const lines = (await res.text()).trim().split("\n").map(JSON.parse);
 const done = lines.find(e => e.type === "done");
-console.log(done.valid, done.prompt);        // true, { high_level_description: ... }
-console.log(done.prompt_compact);            // compact string, ready to paste
+console.log(done.prompt_compact); // compact JSON ready to paste
 ```
 
 ## Python
@@ -108,37 +139,48 @@ import json, requests
 
 res = requests.post(
     "http://127.0.0.1:8123/api/generate",
-    json={"description": "A cozy bookshop storefront at dusk"},
+    json={"description": "A cozy bookshop at dusk", "mode": "plain"},
     stream=True,
 )
 for line in res.iter_lines():
     event = json.loads(line)
     if event["type"] == "done":
-        print(event["valid"], event["prompt_compact"])
+        print(event["text"])
 ```
+
+---
 
 # Project layout
 
 ```
-ideoprompt/
-├── app/                        # Self-contained app
+frameforge/
+├── app/
 │   ├── server.mjs              # HTTP server + generation pipeline
-│   ├── public/index.html       # Web UI
+│   ├── public/index.html       # Web UI (FrameForge)
+│   ├── scripts/
+│   │   └── download-llama.mjs  # Downloads llama-server CUDA binary
 │   ├── src/
-│   │   ├── ideogram-schema.mjs # Official Ideogram 4 JSON Schema (AJV) + key orders
-│   │   ├── generation-schema.mjs # Grammar schema for constrained decoding
-│   │   ├── normalize.mjs       # Deterministic canonicalization
-│   │   ├── validate.mjs        # AJV + key-order validation gate
-│   │   └── prompt.mjs          # System prompt + few-shot examples
-│   └── models/                 # GGUF model (downloaded by install.js)
-├── install.js / start.js / update.js / reset.js / pinokio.js / pinokio.json
+│   │   ├── ideogram-schema.mjs     # Official Ideogram 4 JSON Schema (AJV)
+│   │   ├── generation-schema.mjs   # Grammar schema — all fields required
+│   │   ├── normalize.mjs           # Deterministic canonicalization
+│   │   ├── validate.mjs            # AJV + key-order validation gate
+│   │   └── prompt.mjs              # System prompt + few-shot examples
+│   ├── bin/                    # llama-server binary (downloaded by install)
+│   └── models/                 # GGUF model + mmproj (downloaded by install)
+├── install.js / start.js / update.js / reset.js
 └── README.md
 ```
+
+---
 
 # Configuration
 
 Environment variables read by `app/server.mjs`:
 
-- `PORT` — listen port (set automatically by the Pinokio launcher).
-- `MODEL_PATH` — path to an alternative `.gguf` model (default: first `.gguf` in `app/models/`). Any llama.cpp-compatible instruct model works; non-thinking instruct models are recommended since the grammar constrains output from the first token.
-- `CONTEXT_SIZE` — context window (default 8192).
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `8123` | Listen port (set automatically by Pinokio). |
+| `LLAMA_PORT` | `8124` | Internal llama-server port. |
+| `MODEL_PATH` | First `.gguf` in `app/models/` (non-mmproj) | Path to an alternative model file. |
+| `MMPROJ_PATH` | First `mmproj*.gguf` in `app/models/` | Path to the vision projector. Without this, image input is disabled. |
+| `CONTEXT_SIZE` | `8192` | Context window size. |
