@@ -549,9 +549,22 @@ function renderLayout() {
     const d = document.createElement("div");
     d.className = "box";
     d.style.zIndex = z + 1;
-    const color = (Array.isArray(el.color_palette) && el.color_palette[0]) || "#737373";
+    // Use a fixed high-contrast palette — always visible against the dark canvas
+    // regardless of what dark/muted colors the prompt's color_palette contains
+    const BOX_COLORS = [
+      "#f97316", // orange
+      "#22d3ee", // cyan
+      "#a78bfa", // violet
+      "#4ade80", // green
+      "#f472b6", // pink
+      "#facc15", // yellow
+      "#60a5fa", // blue
+      "#fb7185", // rose
+    ];
+    const idx = current.compositional_deconstruction.elements.indexOf(el);
+    const color = BOX_COLORS[idx % BOX_COLORS.length];
     d.style.borderColor = color;
-    d.style.background = color + "40"; // ~25% opacity fill
+    d.style.background = color + "33"; // ~20% opacity fill
     const tag = document.createElement("span");
     tag.className = "tag";
     tag.textContent = el.type === "text" && el.text
@@ -560,7 +573,7 @@ function renderLayout() {
     d.appendChild(tag);
     const handle = document.createElement("span");
     handle.className = "handle";
-    handle.style.borderColor = color;
+    handle.style.borderColor = color; // matches box border
     d.appendChild(handle);
     positionBox(d, el.bbox);
     attachDrag(d, handle, el);
@@ -682,4 +695,3 @@ document.querySelectorAll(".chip").forEach((chip) =>
 </script>
 </body>
 </html>
-
