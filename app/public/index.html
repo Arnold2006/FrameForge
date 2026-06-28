@@ -466,6 +466,19 @@ document.addEventListener("paste", (e) => {
 
 imgClear.addEventListener("click", (e) => { e.stopPropagation(); clearImage(); });
 
+// ── aspect ratio ─────────────────────────────────────────────────
+let currentAR = "1:1";
+
+document.querySelectorAll(".ar-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".ar-btn").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    currentAR = btn.dataset.ar;
+    const w = btn.dataset.w, h = btn.dataset.h;
+    canvas.style.aspectRatio = w + " / " + h;
+  });
+});
+
 // ── rest of the original logic ────────────────────────────────────
 let busy = false;
 let current = null;
