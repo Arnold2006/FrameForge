@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ideoprompt</title>
+<title>FrameForge</title>
 <style>
   :root {
     --bg: #fafafa;
@@ -51,8 +51,10 @@
   }
   .wrap { max-width: 720px; margin: 0 auto; padding: 48px 20px 96px; }
   header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 40px; }
-  .brand { font-weight: 600; font-size: 16px; letter-spacing: -0.01em; }
-  .brand span { opacity: 0.5; font-weight: 400; }
+  .brand { display: inline-flex; align-items: center; gap: 10px; }
+  .brand svg { width: 32px; height: 32px; flex-shrink: 0; }
+  .brand-name { font-weight: 600; font-size: 16px; letter-spacing: -0.02em; }
+  .brand-name span { color: #f97316; }
   .status {
     display: inline-flex; align-items: center; gap: 6px;
     font-size: 12px; color: var(--muted);
@@ -120,7 +122,7 @@
   }
   .img-clear:hover { color: var(--fg); }
 
-  .bar { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px 10px 16px; border-top: 1px solid var(--border); }
+  .bar { display: flex; align-items: center; justify-content: flex-end; padding: 8px 10px 10px 16px; border-top: 1px solid var(--border); }
   .hint { font-size: 12px; color: var(--muted); }
   button.go {
     border: 0; border-radius: 10px; padding: 8px 18px;
@@ -302,7 +304,25 @@
 <body>
 <div class="wrap">
   <header>
-    <div class="brand">✨ Ideoprompt</div>
+    <div class="brand">
+      <svg width="32" height="32" viewBox="0 0 140 140" xmlns="http://www.w3.org/2000/svg">
+        <rect x="0" y="0" width="140" height="140" rx="22" fill="#1a1a2e"/>
+        <polyline points="22,42 22,22 42,22" stroke="#f97316" stroke-width="9" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        <polyline points="98,22 118,22 118,42" stroke="#f97316" stroke-width="9" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        <polyline points="22,98 22,118 42,118" stroke="#f97316" stroke-width="9" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        <polyline points="98,118 118,118 118,98" stroke="#f97316" stroke-width="9" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        <polyline points="48,62 48,48 62,48" stroke="#22d3ee" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        <polyline points="78,48 92,48 92,62" stroke="#22d3ee" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        <polyline points="48,78 48,92 62,92" stroke="#22d3ee" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        <polyline points="78,92 92,92 92,78" stroke="#22d3ee" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="70" cy="70" r="5" fill="#facc15"/>
+        <circle cx="58" cy="62" r="3" fill="#facc15" opacity="0.75"/>
+        <circle cx="82" cy="61" r="3.5" fill="#facc15" opacity="0.8"/>
+        <circle cx="79" cy="80" r="2.5" fill="#facc15" opacity="0.6"/>
+        <circle cx="60" cy="79" r="3" fill="#facc15" opacity="0.65"/>
+      </svg>
+      <span class="brand-name">Frame<span>Forge</span></span>
+    </div>
     <div class="status" id="status"><span class="dot"></span><span id="statusText">starting…</span></div>
   </header>
 
@@ -368,7 +388,6 @@
     </div>
 
     <div class="bar">
-      <span class="hint">⌘↵ to generate</span>
       <button class="go" id="go"><span class="spinner"></span><span id="goText">Generate</span></button>
     </div>
   </div>
@@ -397,7 +416,7 @@
     </div>
   </div>
 
-  <footer>Runs entirely on your machine · <a href="/api/schema">Ideogram 4 schema</a></footer>
+  <footer>FrameForge · Runs entirely on your machine · <a href="/api/schema">Ideogram 4 schema</a></footer>
 </div>
 
 <script>
