@@ -132,8 +132,13 @@ async function startLlamaServer(serverBin, modelFile, mmprojFile) {
 }
 
 // ── build messages for llama-server ──────────────────────────────────────────
-function buildMessages(description, imageBase64, lastErrors, steering = "") {
-  const sysPrompt = steering ? SYSTEM_PROMPT + "\n\nAdditional style guidance:\n" + steering : SYSTEM_PROMPT;
+function buildMessages(description, imageBase64, lastErrors, steering = "", aspectRatio = "1:1") {
+  const [arW, arH] = aspectRatio.split(":").map(Number);
+  // Scale the 1000x1000 grid to match the target aspect ratio
+  const gridW = arW >= arH ? 1000 : Math.round(1000 * arW / arH);
+  const gridH = arH >= arW ? 1000 : Math.round(1000 * arH / arW);
+  const arNote = `\n\nTarget aspect ratio: ${aspectRatio} (bbox grid is ${gridW}×${gridH}, x in [0,${gridW}], y in [0,${gridH}]). Place and size all bboxes to suit this canvas shape.`;
+  const sysPrompt = (steering ? SYSTEM_PROMPT + "\n\nAdditional style guidance:\n" + steering : SYSTEM_PROMPT) + arNote;
   const messages = [{ role: "system", content: sysPrompt }];
 
   // Few-shot examples (text only)
@@ -172,8 +177,9 @@ function buildMessages(description, imageBase64, lastErrors, steering = "") {
 }
 
 // ── build messages for plain text mode ───────────────────────────────────────
-function buildPlainMessages(description, imageBase64, steering = "") {
-  const sysPrompt = steering ? PLAIN_SYSTEM_PROMPT + "\n\nAdditional style guidance:\n" + steering : PLAIN_SYSTEM_PROMPT;
+function buildPlainMessages(description, imageBase64, steering = "", aspectRatio = "1:1") {
+  const arNote = `\n\nTarget image aspect ratio: ${aspectRatio}. Keep composition descriptions appropriate for this shape.`;
+  const sysPrompt = (steering ? PLAIN_SYSTEM_PROMPT + "\n\nAdditional style guidance:\n" + steering : PLAIN_SYSTEM_PROMPT) + arNote;
   const messages = [{ role: "system", content: sysPrompt }];
   let userContent;
   if (imageBase64) {
@@ -280,9 +286,9 @@ async function callLlamaServerPlain(messages, onChunk) {
 }
 
 // ── plain text generation pipeline ───────────────────────────────────────────
-async function generatePlain(description, imageBase64, emit, steering = "") {
+async function generatePlain(description, imageBase64, emit, steering = "", aspectRatio = "1:1") {
   const started = Date.now();
-  const messages = buildPlainMessages(description, imageBase64, steering);
+  const messages = buildPlainMessages(description, imageBase64, steering, aspectRatio);
   let text;
   try {
     text = await callLlamaServerPlain(
@@ -302,13 +308,13 @@ async function generatePlain(description, imageBase64, emit, steering = "") {
 }
 
 // ── main generation pipeline ──────────────────────────────────────────────────
-async function generateCaption(description, imageBase64, emit, steering = "") {
+async function generateCaption(description, imageBase64, emit, steering = "", aspectRatio = "1:1") {
   let lastErrors = [];
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     if (attempt > 1) emit({ type: "retry", attempt, errors: lastErrors });
 
-    const messages = buildMessages(description, imageBase64, lastErrors, steering);
+    const messages = buildMessages(description, imageBase64, lastErrors, steering, aspectRatio);
     const started = Date.now();
 
     let text;
@@ -419,13 +425,14 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/api/generate") {
-    let description, imageBase64 = null, reqMode = "ideogram", steering = "";
+    let description, imageBase64 = null, reqMode = "ideogram", steering = "", aspectRatio = "1:1";
     try {
       const body = JSON.parse(await readBody(req));
       description = typeof body.description === "string" ? body.description.trim() : "";
       if (typeof body.image === "string" && body.image.length > 0) imageBase64 = body.image;
       if (body.mode === "plain") reqMode = "plain";
       if (typeof body.steering === "string") steering = body.steering.trim();
+      if (typeof body.aspectRatio === "string") aspectRatio = body.aspectRatio;
     } catch {
       sendJson(res, 400, { error: "invalid JSON body" });
       return;
@@ -443,9 +450,9 @@ const server = http.createServer(async (req, res) => {
     const emit = (event) => res.write(JSON.stringify(event) + "\n");
     try {
       if (reqMode === "plain") {
-        await enqueue(() => generatePlain(description, imageBase64, emit, steering));
+        await enqueue(() => generatePlain(description, imageBase64, emit, steering, aspectRatio));
       } else {
-        await enqueue(() => generateCaption(description, imageBase64, emit, steering));
+        await enqueue(() => generateCaption(description, imageBase64, emit, steering, aspectRatio));
       }
     } catch (err) {
       emit({ type: "error", message: String(err?.message || err) });
