@@ -728,7 +728,7 @@ async function generate() {
             renderLayout();
             setBadge("valid", "✓ Valid Ideogram 4 prompt");
             copyBtn.onclick = async () => {
-              await navigator.clipboard.writeText(JSON.stringify(current));
+              await navigator.clipboard.writeText(JSON.stringify(current, null, 2));
               copyBtn.textContent = "Copied";
               setTimeout(() => (copyBtn.textContent = "Copy"), 1500);
             };
