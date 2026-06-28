@@ -32,46 +32,38 @@ const BBOX = {
 
 export const GENERATION_SCHEMA = {
   type: "object",
+  required: ["high_level_description", "style_description", "compositional_deconstruction"],
   properties: {
     high_level_description: { type: "string", minLength: 1 },
     style_description: {
       oneOf: [
         {
-          // Photograph variant
           type: "object",
+          required: ["aesthetics", "lighting", "photo", "medium", "color_palette"],
           properties: {
-            aesthetics: { type: "string", minLength: 1 },
-            lighting: { type: "string", minLength: 1 },
-            photo: { type: "string", minLength: 1 },
-            medium: { const: "photograph" },
-            color_palette: {
-              type: "array",
-              items: HEX_COLOR,
-              minItems: 1,
-              maxItems: 16
-            }
+            aesthetics:    { type: "string", minLength: 1 },
+            lighting:      { type: "string", minLength: 1 },
+            photo:         { type: "string", minLength: 1 },
+            medium:        { const: "photograph" },
+            color_palette: { type: "array", items: HEX_COLOR, minItems: 1, maxItems: 16 }
           }
         },
         {
-          // Art variant (illustration, 3d_render, painting, graphic_design, ...)
           type: "object",
+          required: ["aesthetics", "lighting", "medium", "art_style", "color_palette"],
           properties: {
-            aesthetics: { type: "string", minLength: 1 },
-            lighting: { type: "string", minLength: 1 },
-            medium: { type: "string", minLength: 1 },
-            art_style: { type: "string", minLength: 1 },
-            color_palette: {
-              type: "array",
-              items: HEX_COLOR,
-              minItems: 1,
-              maxItems: 16
-            }
+            aesthetics:    { type: "string", minLength: 1 },
+            lighting:      { type: "string", minLength: 1 },
+            medium:        { type: "string", minLength: 1 },
+            art_style:     { type: "string", minLength: 1 },
+            color_palette: { type: "array", items: HEX_COLOR, minItems: 1, maxItems: 16 }
           }
         }
       ]
     },
     compositional_deconstruction: {
       type: "object",
+      required: ["background", "elements"],
       properties: {
         background: { type: "string", minLength: 1 },
         elements: {
@@ -81,34 +73,24 @@ export const GENERATION_SCHEMA = {
           items: {
             oneOf: [
               {
-                // Object element
                 type: "object",
+                required: ["type", "bbox", "desc", "color_palette"],
                 properties: {
-                  type: { const: "obj" },
-                  bbox: BBOX,
-                  desc: { type: "string", minLength: 1 },
-                  color_palette: {
-                    type: "array",
-                    items: HEX_COLOR,
-                    minItems: 1,
-                    maxItems: 5
-                  }
+                  type:          { const: "obj" },
+                  bbox:          BBOX,
+                  desc:          { type: "string", minLength: 1 },
+                  color_palette: { type: "array", items: HEX_COLOR, minItems: 1, maxItems: 5 }
                 }
               },
               {
-                // Text element (text = literal string to render in the image)
                 type: "object",
+                required: ["type", "bbox", "text", "desc", "color_palette"],
                 properties: {
-                  type: { const: "text" },
-                  bbox: BBOX,
-                  text: { type: "string", minLength: 1 },
-                  desc: { type: "string", minLength: 1 },
-                  color_palette: {
-                    type: "array",
-                    items: HEX_COLOR,
-                    minItems: 1,
-                    maxItems: 5
-                  }
+                  type:          { const: "text" },
+                  bbox:          BBOX,
+                  text:          { type: "string", minLength: 1 },
+                  desc:          { type: "string", minLength: 1 },
+                  color_palette: { type: "array", items: HEX_COLOR, minItems: 1, maxItems: 5 }
                 }
               }
             ]
@@ -117,4 +99,5 @@ export const GENERATION_SCHEMA = {
       }
     }
   }
+};
 };
