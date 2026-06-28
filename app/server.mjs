@@ -132,8 +132,9 @@ async function startLlamaServer(serverBin, modelFile, mmprojFile) {
 }
 
 // ── build messages for llama-server ──────────────────────────────────────────
-function buildMessages(description, imageBase64, lastErrors) {
-  const messages = [{ role: "system", content: SYSTEM_PROMPT }];
+function buildMessages(description, imageBase64, lastErrors, steering = "") {
+  const sysPrompt = steering ? SYSTEM_PROMPT + "\n\nAdditional style guidance:\n" + steering : SYSTEM_PROMPT;
+  const messages = [{ role: "system", content: sysPrompt }];
 
   // Few-shot examples (text only)
   for (const [user, response] of FEW_SHOT) {
@@ -171,8 +172,9 @@ function buildMessages(description, imageBase64, lastErrors) {
 }
 
 // ── build messages for plain text mode ───────────────────────────────────────
-function buildPlainMessages(description, imageBase64) {
-  const messages = [{ role: "system", content: PLAIN_SYSTEM_PROMPT }];
+function buildPlainMessages(description, imageBase64, steering = "") {
+  const sysPrompt = steering ? PLAIN_SYSTEM_PROMPT + "\n\nAdditional style guidance:\n" + steering : PLAIN_SYSTEM_PROMPT;
+  const messages = [{ role: "system", content: sysPrompt }];
   let userContent;
   if (imageBase64) {
     const base64Data = imageBase64.replace(/^data:[^;]+;base64,/, "");
@@ -278,9 +280,9 @@ async function callLlamaServerPlain(messages, onChunk) {
 }
 
 // ── plain text generation pipeline ───────────────────────────────────────────
-async function generatePlain(description, imageBase64, emit) {
+async function generatePlain(description, imageBase64, emit, steering = "") {
   const started = Date.now();
-  const messages = buildPlainMessages(description, imageBase64);
+  const messages = buildPlainMessages(description, imageBase64, steering);
   let text;
   try {
     text = await callLlamaServerPlain(
@@ -300,13 +302,13 @@ async function generatePlain(description, imageBase64, emit) {
 }
 
 // ── main generation pipeline ──────────────────────────────────────────────────
-async function generateCaption(description, imageBase64, emit) {
+async function generateCaption(description, imageBase64, emit, steering = "") {
   let lastErrors = [];
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     if (attempt > 1) emit({ type: "retry", attempt, errors: lastErrors });
 
-    const messages = buildMessages(description, imageBase64, lastErrors);
+    const messages = buildMessages(description, imageBase64, lastErrors, steering);
     const started = Date.now();
 
     let text;
@@ -417,12 +419,13 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/api/generate") {
-    let description, imageBase64 = null, reqMode = "ideogram";
+    let description, imageBase64 = null, reqMode = "ideogram", steering = "";
     try {
       const body = JSON.parse(await readBody(req));
       description = typeof body.description === "string" ? body.description.trim() : "";
       if (typeof body.image === "string" && body.image.length > 0) imageBase64 = body.image;
       if (body.mode === "plain") reqMode = "plain";
+      if (typeof body.steering === "string") steering = body.steering.trim();
     } catch {
       sendJson(res, 400, { error: "invalid JSON body" });
       return;
@@ -440,9 +443,9 @@ const server = http.createServer(async (req, res) => {
     const emit = (event) => res.write(JSON.stringify(event) + "\n");
     try {
       if (reqMode === "plain") {
-        await enqueue(() => generatePlain(description, imageBase64, emit));
+        await enqueue(() => generatePlain(description, imageBase64, emit, steering));
       } else {
-        await enqueue(() => generateCaption(description, imageBase64, emit));
+        await enqueue(() => generateCaption(description, imageBase64, emit, steering));
       }
     } catch (err) {
       emit({ type: "error", message: String(err?.message || err) });
