@@ -252,6 +252,30 @@
     display: none;
   }
   .plain-out.show { display: block; }
+
+  /* ── steering / system prompt addon ── */
+  .steer-toggle {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 16px; border-top: 1px solid var(--border);
+    cursor: pointer; color: var(--muted); font-size: 12px;
+    user-select: none; transition: color 0.15s;
+  }
+  .steer-toggle:hover { color: var(--fg); }
+  .steer-toggle svg { transition: transform 0.2s; flex-shrink: 0; }
+  .steer-toggle.open svg { transform: rotate(90deg); }
+  .steer-body {
+    display: none; padding: 0 16px 12px;
+    border-top: 1px solid var(--border);
+  }
+  .steer-body.open { display: block; }
+  .steer-label { font-size: 11px; color: var(--muted); margin-bottom: 6px; margin-top: 10px; }
+  .steer-body textarea {
+    min-height: 64px; max-height: 160px; font-size: 13px;
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; background: var(--bg); color: var(--fg);
+    resize: vertical;
+  }
+  .steer-body textarea:focus { outline: none; border-color: var(--muted); }
 </style>
 </head>
 <body>
@@ -295,6 +319,18 @@
           </button>
         </div>
       </div>
+    </div>
+
+    <!-- steering / system prompt addon -->
+    <div class="steer-toggle" id="steerToggle">
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M3 1l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span>Steer the style</span>
+    </div>
+    <div class="steer-body" id="steerBody">
+      <div class="steer-label">Appended to system prompt — describe mood, style, aesthetic, era…</div>
+      <textarea id="steerInput" placeholder="e.g. Always prefer cinematic lighting, a dark moody aesthetic, and a film grain texture. Lean toward muted earth tones and chiaroscuro contrast."></textarea>
     </div>
 
     <div class="bar">
@@ -354,6 +390,22 @@ const input = $("input"), go = $("go"), out = $("out"), jsonEl = $("json");
 const badge = $("badge"), meta = $("meta"), copyBtn = $("copy");
 const layoutEl = $("layout"), canvas = $("canvas"), layoutHint = $("layoutHint");
 const HINT_DEFAULT = layoutHint.textContent;
+
+// ── steering toggle ─────────────────────────────────────────────
+const steerToggle = $("steerToggle");
+const steerBody   = $("steerBody");
+const steerInput  = $("steerInput");
+
+steerToggle.addEventListener("click", () => {
+  const open = steerBody.classList.toggle("open");
+  steerToggle.classList.toggle("open", open);
+  if (open) steerInput.focus();
+});
+
+// Also submit on ⌘↵ inside the steer textarea
+steerInput.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") generate();
+});
 
 // ── image state ──────────────────────────────────────────────────
 const imgDrop    = $("imgDrop");
@@ -605,7 +657,8 @@ async function generate() {
 
   let streamed = "";
   try {
-    const body = { description, mode };
+    const steering = steerInput.value.trim();
+    const body = { description, mode, ...(steering ? { steering } : {}) };
     if (imageBase64) body.image = imageBase64; // full data URL — server strips the prefix
 
     const res = await fetch("/api/generate", {
