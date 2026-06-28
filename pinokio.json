@@ -1,5 +1,5 @@
 {
-  "title": "Ideoprompt",
+  "title": "FrameForge",
   "description": "Describe an image, get a 100% schema-valid Ideogram 4 JSON prompt — generated fully locally with an embedded llama.cpp (no Ollama or LM Studio required).",
   "icon": "icon.png"
 }
