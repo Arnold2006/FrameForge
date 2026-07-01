@@ -359,6 +359,99 @@ async function generateCaption(description, imageBase64, emit, aspectRatio = "1:
   });
 }
 
+// ── batch folder captioning ──────────────────────────────────────────────────
+const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"]);
+const IMAGE_MIME_TYPES = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+  ".bmp": "image/bmp",
+  ".gif": "image/gif"
+};
+
+// Runs a single-image generation (ideogram or plain) and resolves with the
+// final "done"/"error" event, while forwarding every event to forwardEmit.
+function generateForFile(reqMode, imageBase64, aspectRatio, forwardEmit) {
+  return new Promise((resolve) => {
+    let resultEvent = null;
+    const emit = (event) => {
+      forwardEmit(event);
+      if (event.type === "done" || event.type === "error") resultEvent = event;
+    };
+    const job = reqMode === "plain"
+      ? generatePlain("", imageBase64, emit, aspectRatio)
+      : generateCaption("", imageBase64, emit, aspectRatio);
+    job.then(() => resolve(resultEvent ?? { type: "error", message: "no result produced" }));
+  });
+}
+
+async function generateFolder(folderPath, reqMode, aspectRatio, emit) {
+  let entries;
+  try {
+    entries = fs.readdirSync(folderPath, { withFileTypes: true });
+  } catch (err) {
+    emit({ type: "error", message: `Could not read folder: ${err.message}` });
+    return;
+  }
+
+  const files = entries
+    .filter((e) => e.isFile() && IMAGE_EXTENSIONS.has(path.extname(e.name).toLowerCase()))
+    .map((e) => e.name)
+    .sort();
+
+  if (files.length === 0) {
+    emit({ type: "error", message: "No supported image files found in folder." });
+    return;
+  }
+
+  let succeeded = 0, failed = 0;
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    emit({ type: "file-start", file, index: i + 1, total: files.length });
+
+    const ext = path.extname(file).toLowerCase();
+    const base = file.slice(0, -ext.length);
+    const filePath = path.join(folderPath, file);
+
+    let imageBase64;
+    try {
+      const buf = fs.readFileSync(filePath);
+      imageBase64 = `data:${IMAGE_MIME_TYPES[ext] || "image/jpeg"};base64,${buf.toString("base64")}`;
+    } catch (err) {
+      failed++;
+      emit({ type: "file-error", file, message: `Could not read file: ${err.message}` });
+      continue;
+    }
+
+    const forwardEmit = (event) => emit({ ...event, file });
+    const result = await generateForFile(reqMode, imageBase64, aspectRatio, forwardEmit);
+
+    if (result.type === "error") {
+      failed++;
+      emit({ type: "file-error", file, message: result.message });
+      continue;
+    }
+
+    const isPlain = result.mode === "plain";
+    const content = isPlain ? result.text : JSON.stringify(result.prompt, null, 2);
+    const outName = base + (isPlain ? ".txt" : ".json");
+    const outPath = path.join(folderPath, outName);
+    try {
+      fs.writeFileSync(outPath, content, "utf8");
+    } catch (err) {
+      failed++;
+      emit({ type: "file-error", file, message: `Could not write caption: ${err.message}` });
+      continue;
+    }
+
+    succeeded++;
+    emit({ type: "file-done", file, outFile: outName, duration_ms: result.duration_ms });
+  }
+
+  emit({ type: "batch-done", total: files.length, succeeded, failed });
+}
+
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -454,6 +547,42 @@ const server = http.createServer(async (req, res) => {
       } else {
         await enqueue(() => generateCaption(description, imageBase64, emit, aspectRatio));
       }
+    } catch (err) {
+      emit({ type: "error", message: String(err?.message || err) });
+    }
+    res.end();
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/generate-folder") {
+    let folderPath, reqMode = "ideogram", aspectRatio = "1:1";
+    try {
+      const body = JSON.parse(await readBody(req));
+      folderPath = typeof body.folderPath === "string" ? body.folderPath.trim() : "";
+      if (body.mode === "plain") reqMode = "plain";
+      if (typeof body.aspectRatio === "string") aspectRatio = body.aspectRatio;
+    } catch {
+      sendJson(res, 400, { error: "invalid JSON body" });
+      return;
+    }
+    if (!folderPath) {
+      sendJson(res, 400, { error: "provide 'folderPath'" });
+      return;
+    }
+    const resolvedPath = path.resolve(folderPath);
+    if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isDirectory()) {
+      sendJson(res, 400, { error: "folderPath is not an existing directory" });
+      return;
+    }
+
+    res.writeHead(200, {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-cache",
+      "X-Accel-Buffering": "no"
+    });
+    const emit = (event) => res.write(JSON.stringify(event) + "\n");
+    try {
+      await enqueue(() => generateFolder(resolvedPath, reqMode, aspectRatio, emit));
     } catch (err) {
       emit({ type: "error", message: String(err?.message || err) });
     }
