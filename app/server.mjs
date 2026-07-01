@@ -309,13 +309,13 @@ async function generatePlain(description, imageBase64, emit, aspectRatio = "1:1"
 }
 
 // ── main generation pipeline ──────────────────────────────────────────────────
-async function generateCaption(description, imageBase64, emit, aspectRatio = "1:1") {
+async function generateCaption(description, imageBase64, emit, aspectRatio = "1:1", steering = "") {
   let lastErrors = [];
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     if (attempt > 1) emit({ type: "retry", attempt, errors: lastErrors });
 
-    const messages = buildMessages(description, imageBase64, lastErrors, aspectRatio);
+    const messages = buildMessages(description, imageBase64, lastErrors, steering, aspectRatio);
     const started = Date.now();
 
     let text;
@@ -372,7 +372,7 @@ const IMAGE_MIME_TYPES = {
 
 // Runs a single-image generation (ideogram or plain) and resolves with the
 // final "done"/"error" event, while forwarding every event to forwardEmit.
-function generateForFile(reqMode, imageBase64, aspectRatio, forwardEmit) {
+function generateForFile(reqMode, imageBase64, aspectRatio, steering, forwardEmit) {
   return new Promise((resolve) => {
     let resultEvent = null;
     const emit = (event) => {
@@ -381,12 +381,12 @@ function generateForFile(reqMode, imageBase64, aspectRatio, forwardEmit) {
     };
     const job = reqMode === "plain"
       ? generatePlain("", imageBase64, emit, aspectRatio)
-      : generateCaption("", imageBase64, emit, aspectRatio);
+      : generateCaption("", imageBase64, emit, aspectRatio, steering);
     job.then(() => resolve(resultEvent ?? { type: "error", message: "no result produced" }));
   });
 }
 
-async function generateFolder(folderPath, reqMode, aspectRatio, emit) {
+async function generateFolder(folderPath, reqMode, aspectRatio, steering, emit) {
   let entries;
   try {
     entries = fs.readdirSync(folderPath, { withFileTypes: true });
@@ -425,7 +425,7 @@ async function generateFolder(folderPath, reqMode, aspectRatio, emit) {
     }
 
     const forwardEmit = (event) => emit({ ...event, file });
-    const result = await generateForFile(reqMode, imageBase64, aspectRatio, forwardEmit);
+    const result = await generateForFile(reqMode, imageBase64, aspectRatio, steering, forwardEmit);
 
     if (result.type === "error") {
       failed++;
@@ -555,12 +555,13 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/api/generate-folder") {
-    let folderPath, reqMode = "ideogram", aspectRatio = "1:1";
+    let folderPath, reqMode = "ideogram", aspectRatio = "1:1", steering = "";
     try {
       const body = JSON.parse(await readBody(req));
       folderPath = typeof body.folderPath === "string" ? body.folderPath.trim() : "";
       if (body.mode === "plain") reqMode = "plain";
       if (typeof body.aspectRatio === "string") aspectRatio = body.aspectRatio;
+      if (typeof body.steering === "string") steering = body.steering.trim();
     } catch {
       sendJson(res, 400, { error: "invalid JSON body" });
       return;
@@ -582,7 +583,7 @@ const server = http.createServer(async (req, res) => {
     });
     const emit = (event) => res.write(JSON.stringify(event) + "\n");
     try {
-      await enqueue(() => generateFolder(resolvedPath, reqMode, aspectRatio, emit));
+      await enqueue(() => generateFolder(resolvedPath, reqMode, aspectRatio, steering, emit));
     } catch (err) {
       emit({ type: "error", message: String(err?.message || err) });
     }

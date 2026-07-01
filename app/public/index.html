@@ -418,7 +418,7 @@
         <input type="text" id="batchFolder" class="batch-input" placeholder="/path/to/folder" spellcheck="false">
         <button class="go" id="batchGo"><span class="spinner"></span><span id="batchGoText">Run</span></button>
       </div>
-      <p class="batch-hint">Uses the mode and aspect ratio selected above. Saves a caption file next to each image, named after the image with a matching extension (.txt for plain text, .json for Ideogram JSON).</p>
+      <p class="batch-hint">Uses the mode and aspect ratio selected above. If you've typed a description above, it will steer every caption (e.g. "always describe the red bicycle"). Saves a caption file next to each image, named after the image with a matching extension (.txt for plain text, .json for Ideogram JSON).</p>
       <div class="batch-list" id="batchList"></div>
     </div>
   </div>
@@ -918,7 +918,7 @@ async function runBatch() {
     const res = await fetch("/api/generate-folder", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ folderPath, mode, aspectRatio: currentAR })
+      body: JSON.stringify({ folderPath, mode, aspectRatio: currentAR, steering: input.value.trim() })
     });
     if (!res.ok) throw new Error((await res.json()).error || res.statusText);
 
