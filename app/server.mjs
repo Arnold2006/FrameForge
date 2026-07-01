@@ -178,9 +178,9 @@ function buildMessages(description, imageBase64, lastErrors, steering = "", aspe
 }
 
 // ── build messages for plain text mode ───────────────────────────────────────
-function buildPlainMessages(description, imageBase64, aspectRatio = "1:1") {
+function buildPlainMessages(description, imageBase64, aspectRatio = "1:1", steering = "") {
   const arNote = `\n\nTarget image aspect ratio: ${aspectRatio}. Keep composition descriptions appropriate for this shape.`;
-  const sysPrompt = PLAIN_SYSTEM_PROMPT + arNote;
+  const sysPrompt = (steering ? PLAIN_SYSTEM_PROMPT + "\n\nAdditional style guidance:\n" + steering : PLAIN_SYSTEM_PROMPT) + arNote;
   const messages = [{ role: "system", content: sysPrompt }];
   let userContent;
   if (imageBase64) {
@@ -287,9 +287,9 @@ async function callLlamaServerPlain(messages, onChunk) {
 }
 
 // ── plain text generation pipeline ───────────────────────────────────────────
-async function generatePlain(description, imageBase64, emit, aspectRatio = "1:1") {
+async function generatePlain(description, imageBase64, emit, aspectRatio = "1:1", steering = "") {
   const started = Date.now();
-  const messages = buildPlainMessages(description, imageBase64, aspectRatio);
+  const messages = buildPlainMessages(description, imageBase64, aspectRatio, steering);
   let text;
   try {
     text = await callLlamaServerPlain(
@@ -380,7 +380,7 @@ function generateForFile(reqMode, imageBase64, aspectRatio, steering, forwardEmi
       if (event.type === "done" || event.type === "error") resultEvent = event;
     };
     const job = reqMode === "plain"
-      ? generatePlain("", imageBase64, emit, aspectRatio)
+      ? generatePlain("", imageBase64, emit, aspectRatio, steering)
       : generateCaption("", imageBase64, emit, aspectRatio, steering);
     job.then(() => resolve(resultEvent ?? { type: "error", message: "no result produced" }));
   });
