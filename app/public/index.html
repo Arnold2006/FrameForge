@@ -214,7 +214,22 @@
     cursor: nwse-resize; border-right: 3px solid; border-bottom: 3px solid;
     opacity: 0.9;
   }
-  .layout-hint { font-size: 11px; color: var(--muted); text-align: center; padding: 8px 0 12px; }
+  .box .delete-btn {
+    position: absolute; top: 2px; right: 2px; width: 18px; height: 18px;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.7); color: #fff; border: none; border-radius: 50%;
+    font-size: 12px; line-height: 1; cursor: pointer; padding: 0;
+    opacity: 0; transition: opacity 0.15s;
+  }
+  .box:hover .delete-btn { opacity: 1; }
+  .layout-controls { display: flex; justify-content: center; gap: 8px; padding: 8px 0 4px; }
+  .layout-controls button {
+    font-size: 11px; padding: 3px 10px; border-radius: 4px;
+    border: 1px solid var(--border); background: var(--card); color: var(--fg);
+    cursor: pointer; font-weight: 500;
+  }
+  .layout-controls button:hover { background: var(--border); }
+  .layout-hint { font-size: 11px; color: var(--muted); text-align: center; padding: 4px 0 12px; }
   footer { margin-top: 48px; text-align: center; font-size: 12px; color: var(--muted); }
   footer a { color: inherit; }
 
@@ -435,7 +450,10 @@
     <div class="out-body">
       <div class="layout" id="layout" style="display:none">
         <div class="canvas" id="canvas"></div>
-        <div class="layout-hint" id="layoutHint">drag to move · pull corner to resize · coordinates update live</div>
+        <div class="layout-controls" id="layoutControls">
+          <button id="addBoxBtn" title="Add a new element">+ Add Element</button>
+        </div>
+        <div class="layout-hint" id="layoutHint">drag to move · pull corner to resize · click × to delete</div>
       </div>
       <pre id="json"></pre>
       <div class="plain-out" id="plainOut"></div>
@@ -754,6 +772,21 @@ function renderLayout() {
       ? "\u201c" + el.text + "\u201d"
       : String(el.desc || el.type).split(/[,.]/ )[0].split(/\s+/).slice(0, 3).join(" ");
     d.appendChild(tag);
+    const delBtn = document.createElement("button");
+    delBtn.className = "delete-btn";
+    delBtn.textContent = "\u00d7";
+    delBtn.title = "Delete element";
+    delBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const elIdx = current.compositional_deconstruction.elements.indexOf(el);
+      if (elIdx !== -1) {
+        current.compositional_deconstruction.elements.splice(elIdx, 1);
+        activeBbox = null;
+        renderLayout();
+        refreshJson();
+      }
+    });
+    d.appendChild(delBtn);
     const handle = document.createElement("span");
     handle.className = "handle";
     handle.style.borderColor = color; // matches box border
@@ -763,6 +796,18 @@ function renderLayout() {
     canvas.appendChild(d);
   });
 }
+
+// ── add element ──────────────────────────────────────────────────
+$("addBoxBtn").addEventListener("click", () => {
+  if (!current || !current.compositional_deconstruction) return;
+  const els = current.compositional_deconstruction.elements;
+  const newEl = { type: "obj", bbox: [300, 300, 700, 700], desc: "new element" };
+  els.push(newEl);
+  activeBbox = els.length - 1;
+  renderLayout();
+  refreshJson();
+  revealActiveBbox();
+});
 
 async function generate() {
   const description = input.value.trim();
