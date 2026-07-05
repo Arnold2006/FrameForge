@@ -222,6 +222,24 @@
     opacity: 0; transition: opacity 0.15s;
   }
   .box:hover .delete-btn { opacity: 1; }
+  .box .color-pick {
+    position: absolute; top: 2px; right: 22px; width: 18px; height: 18px;
+    padding: 0; border: 1px solid rgba(255,255,255,0.5); border-radius: 50%;
+    cursor: pointer; opacity: 0; transition: opacity 0.15s;
+    background: none; overflow: hidden;
+  }
+  .box .color-pick input {
+    position: absolute; top: -4px; left: -4px; width: 26px; height: 26px;
+    border: none; padding: 0; cursor: pointer;
+  }
+  .box:hover .color-pick { opacity: 1; }
+  .box .desc-input {
+    position: absolute; bottom: 2px; left: 2px; right: 18px;
+    font-size: 10px; padding: 2px 4px; border: none; border-radius: 3px;
+    background: rgba(0,0,0,0.7); color: #fff; outline: none;
+    opacity: 0; transition: opacity 0.15s; pointer-events: none;
+  }
+  .box:hover .desc-input { opacity: 1; pointer-events: auto; }
   .layout-controls { display: flex; justify-content: center; gap: 8px; padding: 8px 0 4px; }
   .layout-controls button {
     font-size: 11px; padding: 3px 10px; border-radius: 4px;
@@ -694,6 +712,8 @@ function positionBox(d, bbox) {
 function attachDrag(d, handle, el) {
   let mode = null, sx = 0, sy = 0, start = null;
   d.addEventListener("pointerdown", (e) => {
+    // Don't start drag when clicking delete button, color picker, or desc input
+    if (e.target.closest(".delete-btn") || e.target.closest(".color-pick") || e.target.closest(".desc-input")) return;
     mode = e.target === handle ? "resize" : "move";
     sx = e.clientX; sy = e.clientY;
     start = el.bbox.slice();
@@ -787,12 +807,51 @@ function renderLayout() {
       }
     });
     d.appendChild(delBtn);
-    const handle = document.createElement("span");
-    handle.className = "handle";
-    handle.style.borderColor = color; // matches box border
-    d.appendChild(handle);
+    // Color picker
+    const colorWrap = document.createElement("span");
+    colorWrap.className = "color-pick";
+    const colorInput = document.createElement("input");
+    colorInput.type = "color";
+    colorInput.value = el.color || color;
+    colorInput.title = "Pick box color";
+    colorInput.addEventListener("input", (e) => {
+      e.stopPropagation();
+      const c = e.target.value;
+      el.color = c;
+      d.style.borderColor = c;
+      d.style.background = c + "33";
+      handleEl.style.borderColor = c;
+      refreshJson();
+    });
+    colorWrap.appendChild(colorInput);
+    d.appendChild(colorWrap);
+    // Apply saved custom color if present
+    if (el.color) {
+      d.style.borderColor = el.color;
+      d.style.background = el.color + "33";
+    }
+    // Description input
+    const descInput = document.createElement("input");
+    descInput.className = "desc-input";
+    descInput.type = "text";
+    descInput.placeholder = "description…";
+    descInput.value = el.desc || "";
+    descInput.addEventListener("input", (e) => {
+      e.stopPropagation();
+      el.desc = e.target.value;
+      tag.textContent = el.type === "text" && el.text
+        ? "\u201c" + el.text + "\u201d"
+        : String(el.desc || el.type).split(/[,.]/ )[0].split(/\s+/).slice(0, 3).join(" ");
+      refreshJson();
+    });
+    descInput.addEventListener("pointerdown", (e) => e.stopPropagation());
+    d.appendChild(descInput);
+    const handleEl = document.createElement("span");
+    handleEl.className = "handle";
+    handleEl.style.borderColor = el.color || color;
+    d.appendChild(handleEl);
     positionBox(d, el.bbox);
-    attachDrag(d, handle, el);
+    attachDrag(d, handleEl, el);
     canvas.appendChild(d);
   });
 }
