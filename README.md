@@ -29,6 +29,7 @@ Schema reference: [Ideogram 4 prompting docs](https://github.com/ideogram-oss/id
 - **Interactive bbox editor** — drag elements to move them, pull the corner handle to resize; coordinates update live in the JSON view
 - **Aspect ratio selector** — choose from 8 common presets (1:1, 4:3, 3:2, 16:9, 21:9, 2:3, 3:4, 9:16); the canvas reshapes instantly and the model is informed of the target ratio
 - **Style steering** — expand the "Steer the style" panel and describe a mood, aesthetic, or era; the text is appended to the system prompt without breaking schema constraints
+- **Chat tab** — a full conversational assistant powered by the same local model; supports multi-turn conversations, image attachments (drag & drop or paste), conversation history stored in the browser, and optional web-search augmentation that fetches live results before answering
 - **GPU accelerated** — runs on CUDA 12.4; an RTX 3090 generates a prompt in roughly 5–15 seconds
 
 ---
@@ -76,6 +77,14 @@ Then open http://127.0.0.1:8123.
 5. Optionally expand **Steer the style** to add mood or aesthetic guidance before regenerating.
 6. Click **Copy** to copy the prompt and paste it directly into Ideogram or your preferred T2I model.
 
+### Chat
+
+1. Click the **Chat** tab in the sidebar to open the conversational assistant.
+2. Type a message and press Enter (or click Send). The same local model answers in a multi-turn conversation.
+3. Optionally attach an image by clicking the 📎 button, dragging an image onto the chat area, or pasting from your clipboard — the model will analyse it in context.
+4. Toggle the 🌐 **Web search** button to let the assistant fetch live web results before answering.
+5. Previous conversations are saved in the browser's local storage; use the sidebar history list to switch between them or click **+ New Chat** to start fresh.
+
 Tips:
 - Put text you want rendered in the image inside "double quotes" — it is copied into `text` elements literally.
 - Name a medium ("photo", "watercolor", "pixel art", "logo") to steer `style_description`.
@@ -92,6 +101,7 @@ The server runs on `127.0.0.1:8123` (or the port assigned by Pinokio).
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/api/generate` | Body: `{"description":"...","image":"<base64>","mode":"ideogram\|plain","aspectRatio":"16:9","steering":"..."}`. Streams NDJSON events. |
+| `POST` | `/api/chat` | Body: `{"messages":[...],"forceSearch":false}`. Multi-turn chat; streams NDJSON events (`chunk`, `searching`, `done`, `error`). |
 | `GET` | `/api/health` | `{"status":"ok","model":"...","mmproj":"...","vision":true}` |
 | `GET` | `/api/schema` | Full Ideogram 4 JSON Schema used for validation. |
 
@@ -102,6 +112,15 @@ The server runs on `127.0.0.1:8123` (or the port assigned by Pinokio).
 {"type":"retry","attempt":2,...}       — automatic retry on validation failure
 {"type":"done","mode":"ideogram","prompt":{...},"prompt_compact":"...","valid":true,"duration_ms":4201}
 {"type":"done","mode":"plain","text":"...","duration_ms":2109}
+{"type":"error","message":"..."}
+```
+
+### Chat streamed events
+
+```
+{"type":"searching","query":"..."}       — web search triggered (when enabled)
+{"type":"chunk","text":"..."}            — token stream
+{"type":"done","duration_ms":3201}
 {"type":"error","message":"..."}
 ```
 
