@@ -187,6 +187,14 @@
     display: flex; align-items: center; transition: color 0.15s, border-color 0.15s;
   }
   .chat-attach:hover { color: var(--fg); border-color: var(--muted); }
+  .chat-web-toggle {
+    background: none; border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px 8px; cursor: pointer; font-size: 15px; flex-shrink: 0;
+    opacity: 0.5; transition: opacity 0.15s, border-color 0.15s, background 0.15s;
+    line-height: 1;
+  }
+  .chat-web-toggle:hover { opacity: 0.8; border-color: var(--muted); }
+  .chat-web-toggle.active { opacity: 1; background: var(--accent); border-color: var(--accent); }
   .chat-textarea {
     flex: 1; min-height: 40px; max-height: 160px; resize: none;
     padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px;
@@ -688,6 +696,7 @@
             <button class="chat-attach" id="chatAttach" title="Attach image (or drag &amp; drop, paste)">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M13.5 9.5l-4.5 4.5a4 4 0 01-5.657-5.657l6-6a2.5 2.5 0 013.535 3.535L6.879 11.88a1 1 0 01-1.415-1.414L11.5 4.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
+            <button class="chat-web-toggle" id="chatWebToggle" title="Toggle web search for this message">🌐</button>
             <input type="file" id="chatImgInput" accept="image/*" style="display:none">
             <textarea class="chat-textarea" id="chatInput" placeholder="Message…" rows="1"></textarea>
             <button class="go" id="chatSend"><span class="spinner"></span><span id="chatSendText">Send</span></button>
@@ -1347,13 +1356,32 @@ batchFolder.addEventListener("keydown", (e) => { if (e.key === "Enter") runBatch
 // CHAT TAB
 // ════════════════════════════════════════════════════════════════
 const CHATS_KEY = "ff_chats";
+const CHATS_VERSION_KEY = "ff_chats_version";
+const CHATS_VERSION = 2; // bump when DEFAULT_SYS_PROMPT changes
 const DEFAULT_SYS_PROMPT = "You are a helpful assistant. Answer clearly and concisely.";
 
-// ── persistence ──────────────────────────────────────────────────
+// ── persistence with version migration ───────────────────────────
 function loadChats() {
-  try { return JSON.parse(localStorage.getItem(CHATS_KEY) || "[]"); } catch { return []; }
+  try {
+    const stored = JSON.parse(localStorage.getItem(CHATS_KEY) || "[]");
+    const storedVersion = Number(localStorage.getItem(CHATS_VERSION_KEY) || "1");
+    if (storedVersion < CHATS_VERSION) {
+      // Migrate: update system prompts in existing chats to the new default
+      for (const chat of stored) {
+        if (!chat.systemPrompt || chat.systemPrompt === "You are a helpful assistant. Answer clearly and concisely.") {
+          chat.systemPrompt = DEFAULT_SYS_PROMPT;
+        }
+      }
+      localStorage.setItem(CHATS_VERSION_KEY, String(CHATS_VERSION));
+      localStorage.setItem(CHATS_KEY, JSON.stringify(stored));
+    }
+    return stored;
+  } catch { return []; }
 }
-function saveChats(arr) { localStorage.setItem(CHATS_KEY, JSON.stringify(arr)); }
+function saveChats(arr) {
+  localStorage.setItem(CHATS_KEY, JSON.stringify(arr));
+  localStorage.setItem(CHATS_VERSION_KEY, String(CHATS_VERSION));
+}
 
 function makeChatObj() {
   return {
@@ -1371,6 +1399,15 @@ let currentChatId = null;
 let chatBusy = false;
 let chatImageBase64 = null;
 let chatInitDone = false;
+let chatForceSearch = false;
+
+// ── web search toggle ─────────────────────────────────────────────
+const webToggleBtn = $("chatWebToggle");
+webToggleBtn.addEventListener("click", () => {
+  chatForceSearch = !chatForceSearch;
+  webToggleBtn.classList.toggle("active", chatForceSearch);
+  webToggleBtn.title = chatForceSearch ? "Web search ON (click to disable)" : "Toggle web search for this message";
+});
 
 // ── history sidebar ───────────────────────────────────────────────
 function renderHistory() {
@@ -1607,12 +1644,18 @@ async function sendChat() {
   const sysPrompt = chat.systemPrompt || DEFAULT_SYS_PROMPT;
   const messagesToSend = [{ role: "system", content: sysPrompt }, ...chat.messages];
 
+  // Capture and reset web search toggle state
+  const shouldForceSearch = chatForceSearch;
+  chatForceSearch = false;
+  webToggleBtn.classList.remove("active");
+  webToggleBtn.title = "Toggle web search for this message";
+
   let fullText = "";
   try {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: messagesToSend })
+      body: JSON.stringify({ messages: messagesToSend, forceSearch: shouldForceSearch })
     });
     if (!res.ok) throw new Error((await res.json()).error || res.statusText);
 

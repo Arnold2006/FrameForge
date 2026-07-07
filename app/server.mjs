@@ -14,6 +14,7 @@ import { validateCaption } from "./src/validate.mjs";
 import { SYSTEM_PROMPT, FEW_SHOT } from "./src/prompt.mjs";
 import { GENERATION_SCHEMA } from "./src/generation-schema.mjs";
 import { IDEOGRAM_SCHEMA } from "./src/ideogram-schema.mjs";
+import { search as ddgSearch, SafeSearchType } from "duck-duck-scrape";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -286,12 +287,26 @@ async function callLlamaServerPlain(messages, onChunk) {
   return fullText.trim();
 }
 
-// ── web search via DuckDuckGo ─────────────────────────────────────────────────
+// ── web search via duck-duck-scrape ───────────────────────────────────────────
 async function webSearch(query) {
-  // DuckDuckGo Instant Answer API (good for facts/definitions)
-  const ddgApiUrl =
-    `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
   try {
+    const results = await ddgSearch(query, { safeSearch: SafeSearchType.MODERATE });
+    const items = (results.results || []).slice(0, 6);
+    if (items.length > 0) {
+      const snippets = items.map(r => {
+        const title = r.title || "";
+        const snippet = r.description || "";
+        const url = r.url || "";
+        return `[${title}](${url}): ${snippet}`;
+      });
+      return `Web search results for "${query}":\n${snippets.map(s => `- ${s}`).join("\n")}`;
+    }
+  } catch { /* fall through to fallback */ }
+
+  // Fallback: DuckDuckGo Instant Answer API for facts/definitions
+  try {
+    const ddgApiUrl =
+      `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
     const res = await fetch(ddgApiUrl, {
       headers: { "User-Agent": "FrameForge/1.0" },
       signal: AbortSignal.timeout(8000)
@@ -308,57 +323,44 @@ async function webSearch(query) {
         return `Web search results for "${query}":\n${parts.map(r => `- ${r}`).join("\n")}`;
       }
     }
-  } catch { /* fall through */ }
-
-  // Fallback: DuckDuckGo HTML — corrected snippet extraction
-  try {
-    const htmlUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-    const res = await fetch(htmlUrl, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9"
-      },
-      signal: AbortSignal.timeout(10000)
-    });
-    if (res.ok) {
-      const html = await res.text();
-      const snippets = [];
-
-      // DDG HTML wraps snippets in <a class="result__snippet">...</a>
-      const re = /<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
-      for (const m of html.matchAll(re)) {
-        const text = m[1].replace(/<[^>]+>/g, " ")
-          .replace(/&amp;/g, "&")
-          .replace(/&lt;/g, "<")
-          .replace(/&gt;/g, ">")
-          .replace(/&#x27;/g, "'")
-          .replace(/&quot;/g, '"')
-          .replace(/\s+/g, " ").trim();
-        if (text) { snippets.push(text); if (snippets.length >= 5) break; }
-      }
-
-      if (snippets.length > 0) {
-        return `Web search results for "${query}":\n${snippets.map(r => `- ${r}`).join("\n")}`;
-      }
-
-      // Last resort: grab result titles so the model has something to work with
-      const titleRe = /<a[^>]+class="result__a"[^>]*>([\s\S]*?)<\/a>/gi;
-      const titles = [];
-      for (const m of html.matchAll(titleRe)) {
-        const text = m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
-        if (text) { titles.push(text); if (titles.length >= 5) break; }
-      }
-      if (titles.length > 0) {
-        return `Web search results for "${query}" (titles only):\n${titles.map(r => `- ${r}`).join("\n")}`;
-      }
-    }
   } catch { /* ignore */ }
 
   return `No web search results found for "${query}".`;
 }
 
+// ── LLM-based search query rewriting ──────────────────────────────────────────
+async function rewriteSearchQuery(rawQuery) {
+  // Use the local LLM to rewrite the user's message into an optimized search query
+  try {
+    const rewriteMessages = [
+      { role: "system", content: "You are a search query optimizer. Given a user's question or request, rewrite it as a concise, effective web search query. Output ONLY the search query — no explanation, no quotes, no preamble. Keep it under 10 words when possible." },
+      { role: "user", content: rawQuery }
+    ];
+    const res = await fetch(`http://127.0.0.1:${LLAMA_PORT}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "local",
+        messages: rewriteMessages,
+        temperature: 0.3,
+        max_tokens: 40,
+        stream: false
+      }),
+      signal: AbortSignal.timeout(5000)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const rewritten = data.choices?.[0]?.message?.content?.trim();
+      if (rewritten && rewritten.length > 2 && rewritten.length < 200) {
+        return rewritten;
+      }
+    }
+  } catch { /* fall through to raw query */ }
+  return rawQuery;
+}
+
 // ── detect web-search intent in chat messages ─────────────────────────────────
-function extractSearchQuery(messages) {
+function extractSearchQuery(messages, forceSearch = false) {
   const lastUser = [...messages].reverse().find(m => m.role === "user");
   if (!lastUser) return null;
   const text =
@@ -366,13 +368,24 @@ function extractSearchQuery(messages) {
       ? lastUser.content
       : (lastUser.content.find(p => p.type === "text")?.text ?? "");
 
+  // If user explicitly toggled web search on, use the whole message as query
+  if (forceSearch) return text.trim() || null;
+
+  // Explicit "search the web/internet for X" patterns
+  const webFor = text.match(/(?:search|look|browse)\s+(?:the\s+)?(?:web|internet|online)\s+(?:for|about)\s+(.+)/i);
+  if (webFor) return webFor[1].trim();
+
   // Explicit search command (starting with a command keyword)
-  const explicit = text.match(/^(?:search|look\s*up|google|find)\s+(?:for\s+)?(.+)/i);
+  const explicit = text.match(/^(?:search|look\s*up|google|find|look\s+for)\s+(?:for\s+)?(.+)/i);
   if (explicit) return explicit[1].trim();
 
   // Explicit indirect command ("check the web for X", "look online for X")
   const indirect = text.match(/(?:check\s+(?:the\s+)?(?:web|online|internet)\s+for|look\s+online\s+for)\s+(.+)/i);
   if (indirect) return indirect[1].trim();
+
+  // "What's happening with X", "Tell me about X news"
+  const whats = text.match(/(?:what(?:'s| is)\s+happening\s+(?:with|in|about))\s+(.+)/i);
+  if (whats) return whats[1].trim();
 
   // Heuristic: questions that likely require live / factual data
   if (/\b(current|latest|recent|today|right now|news|weather|price|score|stock|who is|what is|any updates|any info(?:rmation)?\s+(?:on|about))\b/i.test(text)) {
@@ -688,6 +701,7 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/api/chat") {
     let messages;
+    let forceSearch = false;
     try {
       const body = JSON.parse(await readBody(req));
       if (!Array.isArray(body.messages) || body.messages.length === 0) {
@@ -695,6 +709,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       messages = body.messages;
+      forceSearch = !!body.forceSearch;
     } catch {
       sendJson(res, 400, { error: "invalid JSON body" });
       return;
@@ -717,10 +732,12 @@ const server = http.createServer(async (req, res) => {
         const started = Date.now();
         try {
           // Web-search augmentation: inject results before the LLM call
-          const searchQuery = extractSearchQuery(messages);
+          const searchQuery = extractSearchQuery(messages, forceSearch);
           if (searchQuery) {
-            emit({ type: "searching", query: searchQuery });
-            const searchResult = await webSearch(searchQuery);
+            // Generate an optimized search query using LLM rewriting
+            const optimizedQuery = await rewriteSearchQuery(searchQuery);
+            emit({ type: "searching", query: optimizedQuery });
+            const searchResult = await webSearch(optimizedQuery);
             // Inject the search context right before the last user message so
             // the model sees fresh data without altering the system prompt.
             const lastUserIdx = messages.reduce(
@@ -732,7 +749,7 @@ const server = http.createServer(async (req, res) => {
                 ? lastMsg.content
                 : (lastMsg.content.find(p => p.type === "text")?.text ?? "");
               const augmented =
-                `[WEB SEARCH RESULTS for "${searchQuery}"]\n${searchResult}\n\n` +
+                `[WEB SEARCH RESULTS for "${optimizedQuery}"]\n${searchResult}\n\n` +
                 `Using the search results above, please answer: ${originalText}`;
               messages = [
                 ...messages.slice(0, lastUserIdx),
