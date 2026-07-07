@@ -366,12 +366,16 @@ function extractSearchQuery(messages) {
       ? lastUser.content
       : (lastUser.content.find(p => p.type === "text")?.text ?? "");
 
-  // Explicit search command
+  // Explicit search command (starting with a command keyword)
   const explicit = text.match(/^(?:search|look\s*up|google|find)\s+(?:for\s+)?(.+)/i);
   if (explicit) return explicit[1].trim();
 
+  // Explicit indirect command ("check the web for X", "look online for X")
+  const indirect = text.match(/(?:check\s+(?:the\s+)?(?:web|online|internet)\s+for|look\s+online\s+for)\s+(.+)/i);
+  if (indirect) return indirect[1].trim();
+
   // Heuristic: questions that likely require live / factual data
-  if (/\b(current|latest|recent|today|right now|news|weather|price|score|stock|who is|what is)\b/i.test(text)) {
+  if (/\b(current|latest|recent|today|right now|news|weather|price|score|stock|who is|what is|any updates|any info(?:rmation)?\s+(?:on|about))\b/i.test(text)) {
     return text.trim();
   }
   return null;
@@ -698,7 +702,7 @@ const server = http.createServer(async (req, res) => {
     // Ensure a system message is present at position 0
     if (!messages[0] || messages[0].role !== "system") {
       messages = [
-        { role: "system", content: "You are a helpful assistant. Answer clearly and concisely." },
+        { role: "system", content: "You are a helpful assistant. Answer clearly and concisely. You have been equipped with a web search tool. When a [WEB SEARCH RESULTS] block appears in the conversation, you MUST use those results to answer the user's question — do NOT say you lack internet access when search results have been provided. Synthesize the results naturally and cite them where relevant." },
         ...messages
       ];
     }
@@ -723,10 +727,17 @@ const server = http.createServer(async (req, res) => {
               (acc, m, i) => (m.role === "user" ? i : acc), -1
             );
             if (lastUserIdx !== -1) {
+              const lastMsg = messages[lastUserIdx];
+              const originalText = typeof lastMsg.content === "string"
+                ? lastMsg.content
+                : (lastMsg.content.find(p => p.type === "text")?.text ?? "");
+              const augmented =
+                `[WEB SEARCH RESULTS for "${searchQuery}"]\n${searchResult}\n\n` +
+                `Using the search results above, please answer: ${originalText}`;
               messages = [
                 ...messages.slice(0, lastUserIdx),
-                { role: "system", content: searchResult },
-                ...messages.slice(lastUserIdx)
+                { role: "user", content: augmented },
+                ...messages.slice(lastUserIdx + 1)
               ];
             }
           }
