@@ -14,7 +14,7 @@ import { validateCaption } from "./src/validate.mjs";
 import { SYSTEM_PROMPT, FEW_SHOT } from "./src/prompt.mjs";
 import { GENERATION_SCHEMA } from "./src/generation-schema.mjs";
 import { IDEOGRAM_SCHEMA } from "./src/ideogram-schema.mjs";
-import { search as ddgSearch, SafeSearchType } from "duck-duck-scrape";
+import { webSearch } from "./src/web-search.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -287,46 +287,7 @@ async function callLlamaServerPlain(messages, onChunk) {
   return fullText.trim();
 }
 
-// ── web search via duck-duck-scrape ───────────────────────────────────────────
-async function webSearch(query) {
-  try {
-    const results = await ddgSearch(query, { safeSearch: SafeSearchType.MODERATE });
-    const items = (results.results || []).slice(0, 6);
-    if (items.length > 0) {
-      const snippets = items.map(r => {
-        const title = r.title || "";
-        const snippet = r.description || "";
-        const url = r.url || "";
-        return `[${title}](${url}): ${snippet}`;
-      });
-      return `Web search results for "${query}":\n${snippets.map(s => `- ${s}`).join("\n")}`;
-    }
-  } catch { /* fall through to fallback */ }
 
-  // Fallback: DuckDuckGo Instant Answer API for facts/definitions
-  try {
-    const ddgApiUrl =
-      `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
-    const res = await fetch(ddgApiUrl, {
-      headers: { "User-Agent": "FrameForge/1.0" },
-      signal: AbortSignal.timeout(8000)
-    });
-    if (res.ok) {
-      const data = await res.json();
-      const parts = [];
-      if (data.AbstractText) parts.push(data.AbstractText);
-      if (data.Answer) parts.push(data.Answer);
-      for (const topic of (data.RelatedTopics || []).slice(0, 5)) {
-        if (topic.Text) parts.push(topic.Text);
-      }
-      if (parts.length > 0) {
-        return `Web search results for "${query}":\n${parts.map(r => `- ${r}`).join("\n")}`;
-      }
-    }
-  } catch { /* ignore */ }
-
-  return `No web search results found for "${query}".`;
-}
 
 // ── LLM-based search query rewriting ──────────────────────────────────────────
 async function rewriteSearchQuery(rawQuery) {
