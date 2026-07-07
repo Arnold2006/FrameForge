@@ -6,14 +6,14 @@
   "type": "module",
   "main": "server.mjs",
   "scripts": {
-    "start": "node server.mjs"
+    "start": "node server.mjs",
+    "test": "node test/web-search.test.mjs"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
     "ajv": "^8.17.1",
-    "duck-duck-scrape": "^2.2.7",
     "node-llama-cpp": "^3.18.1"
   }
 }
