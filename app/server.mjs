@@ -591,6 +591,49 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/chat") {
+    let messages;
+    try {
+      const body = JSON.parse(await readBody(req));
+      if (!Array.isArray(body.messages) || body.messages.length === 0) {
+        sendJson(res, 400, { error: "provide a non-empty 'messages' array" });
+        return;
+      }
+      messages = body.messages;
+    } catch {
+      sendJson(res, 400, { error: "invalid JSON body" });
+      return;
+    }
+    // Ensure a system message is present at position 0
+    if (!messages[0] || messages[0].role !== "system") {
+      messages = [
+        { role: "system", content: "You are a helpful assistant. Answer clearly and concisely." },
+        ...messages
+      ];
+    }
+    res.writeHead(200, {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-cache",
+      "X-Accel-Buffering": "no"
+    });
+    const emit = (event) => res.write(JSON.stringify(event) + "\n");
+    try {
+      await enqueue(async () => {
+        const started = Date.now();
+        try {
+          await callLlamaServerPlain(messages, (chunk) => emit({ type: "chunk", text: chunk }));
+          emit({ type: "done", duration_ms: Date.now() - started });
+        } catch (err) {
+          emit({ type: "error", message: String(err?.message || err) });
+        }
+      });
+    } catch (err) {
+      emit({ type: "error", message: String(err?.message || err) });
+    }
+    res.end();
+    return;
+  }
+
   sendJson(res, 404, { error: "not found" });
 });
 

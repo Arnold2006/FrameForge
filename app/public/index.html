@@ -42,15 +42,161 @@
     }
   }
   * { box-sizing: border-box; }
+  html { height: 100%; }
   body {
-    margin: 0;
+    margin: 0; height: 100%; overflow: hidden;
     background: var(--bg);
     color: var(--fg);
     font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
-  .wrap { max-width: 720px; margin: 0 auto; padding: 48px 20px 96px; }
-  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 40px; }
+  /* ── app shell ── */
+  .app-shell { display: flex; flex-direction: column; height: 100%; }
+  .app-body { flex: 1; display: flex; min-height: 0; overflow: hidden; }
+  .sidebar {
+    width: 220px; flex-shrink: 0;
+    background: var(--card); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .main-pane { flex: 1; min-width: 0; overflow: hidden; display: flex; flex-direction: column; }
+  .tab-pane { display: none; flex: 1; min-height: 0; }
+  .tab-pane.active { display: flex; flex-direction: column; }
+  #tabPrompt { overflow-y: auto; }
+  #tabChat { overflow: hidden; }
+  .prompt-inner { max-width: 720px; margin: 0 auto; padding: 32px 20px 96px; }
+  header { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; padding: 14px 24px; border-bottom: 1px solid var(--border); }
+  /* ── sidebar tab buttons ── */
+  .tab-btns { display: flex; flex-direction: column; gap: 2px; padding: 10px 8px; flex-shrink: 0; }
+  .tab-btn {
+    background: transparent; border: 0; border-radius: 8px; padding: 8px 12px;
+    font: inherit; font-size: 14px; font-weight: 500; color: var(--muted);
+    cursor: pointer; text-align: left; transition: background 0.15s, color 0.15s;
+  }
+  .tab-btn:hover { background: var(--border); color: var(--fg); }
+  .tab-btn.active { background: var(--accent); color: var(--accent-fg); }
+  /* ── chat history sidebar ── */
+  .chat-sidebar {
+    flex: 1; display: flex; flex-direction: column;
+    border-top: 1px solid var(--border); padding: 10px 8px;
+    overflow: hidden; min-height: 0; gap: 6px;
+  }
+  .history-label {
+    font-size: 11px; font-weight: 600; color: var(--muted);
+    letter-spacing: 0.06em; text-transform: uppercase;
+    padding: 0 4px; flex-shrink: 0;
+  }
+  .history-list {
+    flex: 1; overflow-y: auto; display: flex; flex-direction: column;
+    gap: 2px; min-height: 0;
+  }
+  .hist-item {
+    position: relative; display: flex; align-items: center;
+    padding: 7px 28px 7px 8px; border-radius: 8px; cursor: pointer;
+    font-size: 13px; color: var(--fg); transition: background 0.1s;
+    overflow: hidden;
+  }
+  .hist-item:hover { background: var(--border); }
+  .hist-item.active { background: var(--accent); color: var(--accent-fg); }
+  .hist-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .hist-del {
+    position: absolute; right: 4px; background: none; border: 0;
+    cursor: pointer; padding: 3px; color: currentColor; opacity: 0;
+    border-radius: 4px; display: flex; align-items: center; transition: opacity 0.1s;
+    flex-shrink: 0; line-height: 1;
+  }
+  .hist-item:hover .hist-del { opacity: 0.5; }
+  .hist-item:hover .hist-del:hover { opacity: 1; }
+  .hist-item.active .hist-del { opacity: 0.4; }
+  .hist-item.active .hist-del:hover { opacity: 1; }
+  .new-chat-btn {
+    padding: 8px 12px; border-radius: 8px; flex-shrink: 0;
+    background: transparent; border: 1px solid var(--border);
+    color: var(--fg); font: inherit; font-size: 13px;
+    cursor: pointer; text-align: left; transition: background 0.15s;
+  }
+  .new-chat-btn:hover { background: var(--border); }
+  @media (max-width: 639px) {
+    .sidebar { width: auto; min-width: 0; }
+    .chat-sidebar { display: none !important; }
+    .tab-btn { padding: 7px 10px; font-size: 13px; }
+  }
+  /* ── chat UI ── */
+  .chat-layout {
+    flex: 1; display: flex; flex-direction: column; min-height: 0;
+    padding: 16px 24px; max-width: 860px; width: 100%;
+    margin: 0 auto; box-sizing: border-box;
+  }
+  .sys-prompt-card { flex-shrink: 0; margin-bottom: 14px; padding: 12px 16px; }
+  .sys-prompt-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .sys-prompt-label { font-size: 13px; font-weight: 600; color: var(--muted); }
+  .sys-prompt-preview {
+    font-size: 13px; color: var(--muted); margin-top: 6px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .sys-prompt-textarea {
+    display: block; width: 100%; min-height: 80px; max-height: 180px;
+    padding: 10px 12px; border: 1px solid var(--border); outline: 0; resize: vertical;
+    background: var(--code-bg); color: var(--fg);
+    font: 12.5px/1.55 ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    white-space: pre-wrap; word-break: break-word;
+    border-radius: 8px; box-sizing: border-box; margin-top: 10px;
+  }
+  .chat-messages {
+    flex: 1; overflow-y: auto; display: flex; flex-direction: column;
+    gap: 12px; padding: 4px 0 8px; min-height: 0;
+  }
+  .chat-msg {
+    max-width: 78%; padding: 10px 14px; font-size: 14px; line-height: 1.6;
+    word-break: break-word; white-space: pre-wrap;
+  }
+  .chat-msg.user {
+    align-self: flex-end;
+    background: var(--accent); color: var(--accent-fg);
+    border-radius: 14px 14px 4px 14px;
+  }
+  .chat-msg.assistant {
+    align-self: flex-start;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 14px 14px 14px 4px;
+  }
+  .chat-msg-img {
+    display: block; max-width: 120px; border-radius: 8px;
+    margin-bottom: 8px; border: 1px solid var(--border);
+  }
+  .chat-staged {
+    display: none; align-items: center; gap: 8px;
+    padding: 6px 0; flex-shrink: 0;
+  }
+  .chat-staged.has-img { display: flex; }
+  .chat-staged-img {
+    width: 56px; height: 56px; object-fit: cover;
+    border-radius: 8px; border: 1px solid var(--border);
+  }
+  .chat-staged-clear {
+    background: none; border: 0; cursor: pointer; color: var(--muted);
+    padding: 4px; border-radius: 4px; line-height: 1;
+  }
+  .chat-staged-clear:hover { color: var(--fg); }
+  .chat-bar {
+    flex-shrink: 0; display: flex; align-items: flex-end; gap: 8px;
+    padding-top: 12px; border-top: 1px solid var(--border);
+  }
+  .chat-attach {
+    background: none; border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 9px; cursor: pointer; color: var(--muted); flex-shrink: 0;
+    display: flex; align-items: center; transition: color 0.15s, border-color 0.15s;
+  }
+  .chat-attach:hover { color: var(--fg); border-color: var(--muted); }
+  .chat-textarea {
+    flex: 1; min-height: 40px; max-height: 160px; resize: none;
+    padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px;
+    background: var(--card); color: var(--fg); font: inherit; font-size: 14px;
+    outline: none; line-height: 1.5; overflow-y: auto;
+  }
+  .chat-textarea:focus { border-color: var(--muted); }
+  #tabChat.chat-drop-over .chat-layout {
+    outline: 2px dashed var(--accent); outline-offset: -4px; border-radius: 14px;
+  }
   .brand { display: inline-flex; align-items: center; gap: 10px; }
   .brand svg { width: 32px; height: 32px; flex-shrink: 0; }
   .brand-name { font-weight: 600; font-size: 16px; letter-spacing: -0.02em; }
@@ -148,7 +294,7 @@
   .out { margin-top: 28px; display: none; overflow: hidden; }
   .out.show { display: block; }
   @media (min-width: 900px) {
-    .out { --outw: min(1100px, calc(100vw - 48px)); width: var(--outw); margin-left: calc((100% - var(--outw)) / 2); }
+    .out { --outw: min(1100px, calc(100vw - 268px)); width: var(--outw); margin-left: calc((100% - var(--outw)) / 2); }
     .out-body { display: flex; align-items: stretch; }
     .out-body .layout { flex: 0 0 392px; border-bottom: 0; border-right: 1px solid var(--border); }
     .out-body pre { flex: 1; min-width: 0; max-height: 476px; border-radius: 0; }
@@ -367,7 +513,7 @@
 </style>
 </head>
 <body>
-<div class="wrap">
+<div class="app-shell">
   <header>
     <div class="brand">
       <svg width="32" height="32" viewBox="0 0 140 140" xmlns="http://www.w3.org/2000/svg">
@@ -390,6 +536,22 @@
     </div>
     <div class="status" id="status"><span class="dot"></span><span id="statusText">starting…</span></div>
   </header>
+
+  <div class="app-body">
+    <aside class="sidebar" id="sidebar">
+      <div class="tab-btns">
+        <button class="tab-btn active" id="tabBtnPrompt">Prompt</button>
+        <button class="tab-btn" id="tabBtnChat">Chat</button>
+      </div>
+      <div class="chat-sidebar" id="chatSidebar" style="display:none">
+        <div class="history-label">Chats</div>
+        <div class="history-list" id="historyList"></div>
+        <button class="new-chat-btn" id="newChatBtn">+ New Chat</button>
+      </div>
+    </aside>
+    <main class="main-pane">
+      <div id="tabPrompt" class="tab-pane active">
+        <div class="prompt-inner">
 
   <h1 id="pageTitle">Describe an image</h1>
   <p class="sub" id="pageSub">Get a structured Ideogram 4 JSON prompt or a plain text prompt, generated locally.</p>
@@ -491,10 +653,68 @@
   </div>
 
   <footer>FrameForge · Runs entirely on your machine · <a href="/api/schema">Ideogram 4 schema</a></footer>
-</div>
+        </div><!-- /.prompt-inner -->
+      </div><!-- /#tabPrompt -->
+
+      <div id="tabChat" class="tab-pane">
+        <div class="chat-layout">
+          <div class="card sys-prompt-card" id="sysPromptCard">
+            <div id="sysPromptCollapsed">
+              <div class="sys-prompt-head">
+                <span class="sys-prompt-label">System prompt</span>
+                <button class="copy" id="sysPromptEditBtn">Edit</button>
+              </div>
+              <div class="sys-prompt-preview" id="sysPromptPreview"></div>
+            </div>
+            <div id="sysPromptExpanded" style="display:none">
+              <div class="sys-prompt-head" style="margin-bottom:0">
+                <span class="sys-prompt-label">System prompt</span>
+                <div style="display:flex;gap:8px">
+                  <button class="copy" id="sysPromptSaveBtn">Save</button>
+                  <button class="copy" id="sysPromptCancelBtn">Cancel</button>
+                </div>
+              </div>
+              <textarea class="sys-prompt-textarea" id="sysPromptEdit"></textarea>
+            </div>
+          </div>
+          <div class="chat-messages" id="chatMessages"></div>
+          <div class="chat-staged" id="chatStaged">
+            <img class="chat-staged-img" id="chatStagedImg" src="" alt="staged image">
+            <button class="chat-staged-clear" id="chatStagedClear" title="Remove image">
+              <svg width="13" height="13" viewBox="0 0 13 13" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M2 2l9 9M11 2l-9 9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+            </button>
+          </div>
+          <div class="chat-bar">
+            <button class="chat-attach" id="chatAttach" title="Attach image (or drag &amp; drop, paste)">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M13.5 9.5l-4.5 4.5a4 4 0 01-5.657-5.657l6-6a2.5 2.5 0 013.535 3.535L6.879 11.88a1 1 0 01-1.415-1.414L11.5 4.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <input type="file" id="chatImgInput" accept="image/*" style="display:none">
+            <textarea class="chat-textarea" id="chatInput" placeholder="Message…" rows="1"></textarea>
+            <button class="go" id="chatSend"><span class="spinner"></span><span id="chatSendText">Send</span></button>
+          </div>
+        </div>
+      </div><!-- /#tabChat -->
+    </main>
+  </div><!-- /.app-body -->
+</div><!-- /.app-shell -->
 
 <script>
 const $ = (id) => document.getElementById(id);
+
+// ── active tab & tab switching ───────────────────────────────────
+let activeTab = "prompt";
+
+function switchTab(tab) {
+  activeTab = tab;
+  $("tabPrompt").classList.toggle("active", tab === "prompt");
+  $("tabChat").classList.toggle("active", tab === "chat");
+  $("tabBtnPrompt").classList.toggle("active", tab === "prompt");
+  $("tabBtnChat").classList.toggle("active", tab === "chat");
+  $("chatSidebar").style.display = tab === "chat" ? "" : "none";
+  if (tab === "chat") initChat();
+}
+$("tabBtnPrompt").addEventListener("click", () => switchTab("prompt"));
+$("tabBtnChat").addEventListener("click", () => switchTab("chat"));
 
 // ── mode toggle ──────────────────────────────────────────────────
 const toggleTrack   = $("toggleTrack");
@@ -574,7 +794,12 @@ imgZone.addEventListener("drop", (e) => {
 // global paste (anywhere on the page)
 document.addEventListener("paste", (e) => {
   const item = Array.from(e.clipboardData.items).find((i) => i.type.startsWith("image/"));
-  if (item) setImage(item.getAsFile());
+  if (!item) return;
+  if (activeTab === "chat") {
+    setChatImage(item.getAsFile());
+  } else {
+    setImage(item.getAsFile());
+  }
 });
 
 imgClear.addEventListener("click", (e) => { e.stopPropagation(); clearImage(); });
@@ -1117,6 +1342,332 @@ async function runBatch() {
 
 batchGo.addEventListener("click", runBatch);
 batchFolder.addEventListener("keydown", (e) => { if (e.key === "Enter") runBatch(); });
+
+// ════════════════════════════════════════════════════════════════
+// CHAT TAB
+// ════════════════════════════════════════════════════════════════
+const CHATS_KEY = "ff_chats";
+const DEFAULT_SYS_PROMPT = "You are a helpful assistant. Answer clearly and concisely.";
+
+// ── persistence ──────────────────────────────────────────────────
+function loadChats() {
+  try { return JSON.parse(localStorage.getItem(CHATS_KEY) || "[]"); } catch { return []; }
+}
+function saveChats(arr) { localStorage.setItem(CHATS_KEY, JSON.stringify(arr)); }
+
+function makeChatObj() {
+  return {
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2),
+    title: "New chat",
+    systemPrompt: DEFAULT_SYS_PROMPT,
+    messages: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  };
+}
+
+let chats = [];
+let currentChatId = null;
+let chatBusy = false;
+let chatImageBase64 = null;
+let chatInitDone = false;
+
+// ── history sidebar ───────────────────────────────────────────────
+function renderHistory() {
+  const list = $("historyList");
+  list.innerHTML = "";
+  chats.forEach((chat) => {
+    const item = document.createElement("div");
+    item.className = "hist-item" + (chat.id === currentChatId ? " active" : "");
+    item.title = chat.title;
+
+    const titleSpan = document.createElement("span");
+    titleSpan.className = "hist-title";
+    titleSpan.textContent = chat.title;
+    item.appendChild(titleSpan);
+
+    const delBtn = document.createElement("button");
+    delBtn.className = "hist-del";
+    delBtn.title = "Delete chat";
+    delBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M2 3h8M5 3V2h2v1M4 3l.5 7h3l.5-7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    delBtn.addEventListener("click", (e) => { e.stopPropagation(); deleteChat(chat.id); });
+    item.appendChild(delBtn);
+
+    item.addEventListener("click", () => loadChatById(chat.id));
+    list.appendChild(item);
+  });
+}
+
+function deleteChat(id) {
+  const idx = chats.findIndex((c) => c.id === id);
+  if (idx === -1) return;
+  chats.splice(idx, 1);
+  if (chats.length === 0) { chats.push(makeChatObj()); }
+  if (currentChatId === id) {
+    currentChatId = chats[0].id;
+    renderMessages();
+  }
+  saveChats(chats);
+  renderHistory();
+}
+
+// ── system prompt editor ──────────────────────────────────────────
+function updateSysPromptDisplay() {
+  const chat = chats.find((c) => c.id === currentChatId);
+  const sp = (chat && chat.systemPrompt) || DEFAULT_SYS_PROMPT;
+  $("sysPromptPreview").textContent = sp;
+  $("sysPromptEdit").value = sp;
+  $("sysPromptCollapsed").style.display = "";
+  $("sysPromptExpanded").style.display = "none";
+}
+
+$("sysPromptEditBtn").addEventListener("click", () => {
+  $("sysPromptCollapsed").style.display = "none";
+  $("sysPromptExpanded").style.display = "";
+  $("sysPromptEdit").focus();
+});
+$("sysPromptSaveBtn").addEventListener("click", () => {
+  const chat = chats.find((c) => c.id === currentChatId);
+  if (chat) {
+    chat.systemPrompt = $("sysPromptEdit").value;
+    chat.updatedAt = Date.now();
+    saveChats(chats);
+    $("sysPromptPreview").textContent = chat.systemPrompt;
+  }
+  $("sysPromptCollapsed").style.display = "";
+  $("sysPromptExpanded").style.display = "none";
+});
+$("sysPromptCancelBtn").addEventListener("click", () => {
+  const chat = chats.find((c) => c.id === currentChatId);
+  if (chat) $("sysPromptEdit").value = chat.systemPrompt || DEFAULT_SYS_PROMPT;
+  $("sysPromptCollapsed").style.display = "";
+  $("sysPromptExpanded").style.display = "none";
+});
+
+// ── message rendering ─────────────────────────────────────────────
+function renderBubble(msg) {
+  const messagesEl = $("chatMessages");
+  const bubble = document.createElement("div");
+  bubble.className = "chat-msg " + msg.role;
+  if (Array.isArray(msg.content)) {
+    const imgPart = msg.content.find((p) => p.type === "image_url");
+    const textPart = msg.content.find((p) => p.type === "text");
+    if (imgPart) {
+      const img = document.createElement("img");
+      img.className = "chat-msg-img";
+      img.src = imgPart.image_url.url;
+      img.alt = "image";
+      bubble.appendChild(img);
+    }
+    if (textPart && textPart.text) {
+      bubble.appendChild(document.createTextNode(textPart.text));
+    }
+  } else {
+    bubble.textContent = msg.content;
+  }
+  messagesEl.appendChild(bubble);
+  return bubble;
+}
+
+function renderMessages() {
+  const chat = chats.find((c) => c.id === currentChatId);
+  const messagesEl = $("chatMessages");
+  messagesEl.innerHTML = "";
+  if (!chat) return;
+  updateSysPromptDisplay();
+  chat.messages.forEach(renderBubble);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function loadChatById(id) {
+  currentChatId = id;
+  renderMessages();
+  renderHistory();
+}
+
+// ── new chat button ───────────────────────────────────────────────
+$("newChatBtn").addEventListener("click", () => {
+  if (chatBusy) return;
+  const c = makeChatObj();
+  chats.unshift(c);
+  saveChats(chats);
+  currentChatId = c.id;
+  renderMessages();
+  renderHistory();
+});
+
+// ── chat image staging ────────────────────────────────────────────
+function setChatImage(file) {
+  if (!file || !file.type.startsWith("image/")) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    chatImageBase64 = ev.target.result;
+    $("chatStagedImg").src = chatImageBase64;
+    $("chatStaged").classList.add("has-img");
+  };
+  reader.readAsDataURL(file);
+}
+function clearChatImage() {
+  chatImageBase64 = null;
+  $("chatStagedImg").src = "";
+  $("chatStaged").classList.remove("has-img");
+  $("chatImgInput").value = "";
+}
+$("chatAttach").addEventListener("click", () => $("chatImgInput").click());
+$("chatImgInput").addEventListener("change", () => {
+  if ($("chatImgInput").files[0]) setChatImage($("chatImgInput").files[0]);
+});
+$("chatStagedClear").addEventListener("click", clearChatImage);
+
+// drag-and-drop onto the chat pane
+const chatPane = $("tabChat");
+chatPane.addEventListener("dragover", (e) => { e.preventDefault(); chatPane.classList.add("chat-drop-over"); });
+chatPane.addEventListener("dragleave", () => chatPane.classList.remove("chat-drop-over"));
+chatPane.addEventListener("drop", (e) => {
+  e.preventDefault();
+  chatPane.classList.remove("chat-drop-over");
+  const f = e.dataTransfer.files[0];
+  if (f) setChatImage(f);
+});
+
+// ── chat textarea autosize ────────────────────────────────────────
+function autosizeChatInput() {
+  const ta = $("chatInput");
+  ta.style.height = "auto";
+  ta.style.height = Math.min(ta.scrollHeight, 160) + "px";
+}
+$("chatInput").addEventListener("input", autosizeChatInput);
+$("chatInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
+});
+
+// ── send chat message ─────────────────────────────────────────────
+async function sendChat() {
+  const ta = $("chatInput");
+  const text = ta.value.trim();
+  if (!text && !chatImageBase64) return;
+  if (chatBusy) return;
+
+  // Ensure a current chat exists
+  if (!currentChatId || !chats.find((c) => c.id === currentChatId)) {
+    const c = makeChatObj();
+    chats.unshift(c);
+    currentChatId = c.id;
+    saveChats(chats);
+    renderHistory();
+  }
+  const chat = chats.find((c) => c.id === currentChatId);
+
+  // Build user message content
+  let userContent;
+  if (chatImageBase64 && text) {
+    userContent = [
+      { type: "image_url", image_url: { url: chatImageBase64 } },
+      { type: "text", text }
+    ];
+  } else if (chatImageBase64) {
+    userContent = [{ type: "image_url", image_url: { url: chatImageBase64 } }];
+  } else {
+    userContent = text;
+  }
+
+  const userMsg = { role: "user", content: userContent };
+  chat.messages.push(userMsg);
+
+  // Auto-title from first text message
+  if (chat.messages.length === 1) {
+    chat.title = (text || "New chat").slice(0, 40);
+  }
+  chat.updatedAt = Date.now();
+  saveChats(chats);
+  renderHistory();
+
+  // Render user bubble & clear input
+  renderBubble(userMsg);
+  ta.value = "";
+  autosizeChatInput();
+  clearChatImage();
+
+  const messagesEl = $("chatMessages");
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  // Disable send, show spinner
+  chatBusy = true;
+  $("chatSend").disabled = true;
+  $("chatSend").classList.add("busy");
+  $("chatSendText").textContent = "Sending";
+
+  // Assistant bubble (filled by streaming)
+  const assistantBubble = document.createElement("div");
+  assistantBubble.className = "chat-msg assistant";
+  messagesEl.appendChild(assistantBubble);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  // Build full message array including system prompt
+  const sysPrompt = chat.systemPrompt || DEFAULT_SYS_PROMPT;
+  const messagesToSend = [{ role: "system", content: sysPrompt }, ...chat.messages];
+
+  let fullText = "";
+  try {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: messagesToSend })
+    });
+    if (!res.ok) throw new Error((await res.json()).error || res.statusText);
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const event = JSON.parse(line);
+        if (event.type === "chunk") {
+          fullText += event.text;
+          assistantBubble.textContent = fullText;
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        } else if (event.type === "error") {
+          assistantBubble.textContent = "Error: " + event.message;
+        }
+      }
+    }
+  } catch (err) {
+    assistantBubble.textContent = "Error: " + String(err.message || err);
+  } finally {
+    chatBusy = false;
+    $("chatSend").disabled = false;
+    $("chatSend").classList.remove("busy");
+    $("chatSendText").textContent = "Send";
+  }
+
+  // Save assistant reply
+  if (fullText) {
+    chat.messages.push({ role: "assistant", content: fullText });
+    chat.updatedAt = Date.now();
+    saveChats(chats);
+  }
+}
+$("chatSend").addEventListener("click", sendChat);
+
+// ── init chat (called once when tab is first opened) ──────────────
+function initChat() {
+  if (chatInitDone) return;
+  chatInitDone = true;
+  chats = loadChats();
+  if (chats.length === 0) {
+    chats.push(makeChatObj());
+    saveChats(chats);
+  }
+  currentChatId = chats[0].id;
+  renderHistory();
+  renderMessages();
+}
 </script>
 </body>
 </html>
