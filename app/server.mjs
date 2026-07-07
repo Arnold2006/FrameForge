@@ -695,8 +695,12 @@ const server = http.createServer(async (req, res) => {
           // Web-search augmentation: inject results before the LLM call
           const searchQuery = extractSearchQuery(messages, forceSearch);
           if (searchQuery) {
-            // Generate an optimized search query using LLM rewriting
-            const optimizedQuery = await rewriteSearchQuery(searchQuery);
+            // When user explicitly toggled web search, use their raw query to
+            // preserve domains, URLs and specific intent. Only rewrite when
+            // the search was auto-detected via heuristics.
+            const optimizedQuery = forceSearch
+              ? searchQuery
+              : await rewriteSearchQuery(searchQuery);
             emit({ type: "searching", query: optimizedQuery });
             const searchResult = await webSearch(optimizedQuery);
             // Inject the search context right before the last user message so
