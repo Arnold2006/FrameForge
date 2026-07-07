@@ -1628,7 +1628,10 @@ async function sendChat() {
       for (const line of lines) {
         if (!line.trim()) continue;
         const event = JSON.parse(line);
-        if (event.type === "chunk") {
+        if (event.type === "searching") {
+          assistantBubble.textContent = `🔍 Searching the web for "${event.query}"…`;
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        } else if (event.type === "chunk") {
           fullText += event.text;
           assistantBubble.textContent = fullText;
           messagesEl.scrollTop = messagesEl.scrollHeight;

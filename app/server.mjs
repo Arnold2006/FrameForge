@@ -286,6 +286,72 @@ async function callLlamaServerPlain(messages, onChunk) {
   return fullText.trim();
 }
 
+// ── web search via DuckDuckGo ─────────────────────────────────────────────────
+async function webSearch(query) {
+  const ddgApiUrl =
+    `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
+  try {
+    const res = await fetch(ddgApiUrl, {
+      headers: { "User-Agent": "FrameForge/1.0" },
+      signal: AbortSignal.timeout(8000)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const parts = [];
+      if (data.AbstractText) parts.push(data.AbstractText);
+      if (data.Answer) parts.push(data.Answer);
+      for (const topic of (data.RelatedTopics || []).slice(0, 5)) {
+        if (topic.Text) parts.push(topic.Text);
+      }
+      if (parts.length > 0) {
+        return `Web search results for "${query}":\n${parts.map(r => `- ${r}`).join("\n")}`;
+      }
+    }
+  } catch { /* fall through to HTML scrape */ }
+
+  // Fallback: scrape DuckDuckGo HTML results
+  try {
+    const htmlUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+    const res = await fetch(htmlUrl, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; FrameForge/1.0)" },
+      signal: AbortSignal.timeout(8000)
+    });
+    if (res.ok) {
+      const html = await res.text();
+      const snippets = [];
+      for (const m of html.matchAll(/class="result__snippet"[^>]*>([\s\S]+?)<\/a>/g)) {
+        const text = m[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+        if (text) { snippets.push(text); if (snippets.length >= 5) break; }
+      }
+      if (snippets.length > 0) {
+        return `Web search results for "${query}":\n${snippets.map(r => `- ${r}`).join("\n")}`;
+      }
+    }
+  } catch { /* ignore */ }
+
+  return `No web search results found for "${query}".`;
+}
+
+// ── detect web-search intent in chat messages ─────────────────────────────────
+function extractSearchQuery(messages) {
+  const lastUser = [...messages].reverse().find(m => m.role === "user");
+  if (!lastUser) return null;
+  const text =
+    typeof lastUser.content === "string"
+      ? lastUser.content
+      : (lastUser.content.find(p => p.type === "text")?.text ?? "");
+
+  // Explicit search command
+  const explicit = text.match(/^(?:search|look\s*up|google|find)\s+(?:for\s+)?(.+)/i);
+  if (explicit) return explicit[1].trim();
+
+  // Heuristic: questions that likely require live / factual data
+  if (/\b(current|latest|recent|today|right now|news|weather|price|score|stock|who is|what is)\b/i.test(text)) {
+    return text.trim();
+  }
+  return null;
+}
+
 // ── plain text generation pipeline ───────────────────────────────────────────
 async function generatePlain(description, imageBase64, emit, aspectRatio = "1:1", steering = "") {
   const started = Date.now();
@@ -621,6 +687,24 @@ const server = http.createServer(async (req, res) => {
       await enqueue(async () => {
         const started = Date.now();
         try {
+          // Web-search augmentation: inject results before the LLM call
+          const searchQuery = extractSearchQuery(messages);
+          if (searchQuery) {
+            emit({ type: "searching", query: searchQuery });
+            const searchResult = await webSearch(searchQuery);
+            // Inject the search context right before the last user message so
+            // the model sees fresh data without altering the system prompt.
+            const lastUserIdx = messages.reduce(
+              (acc, m, i) => (m.role === "user" ? i : acc), -1
+            );
+            if (lastUserIdx !== -1) {
+              messages = [
+                ...messages.slice(0, lastUserIdx),
+                { role: "system", content: searchResult },
+                ...messages.slice(lastUserIdx)
+              ];
+            }
+          }
           await callLlamaServerPlain(messages, (chunk) => emit({ type: "chunk", text: chunk }));
           emit({ type: "done", duration_ms: Date.now() - started });
         } catch (err) {
