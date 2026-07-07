@@ -288,6 +288,7 @@ async function callLlamaServerPlain(messages, onChunk) {
 
 // ── web search via DuckDuckGo ─────────────────────────────────────────────────
 async function webSearch(query) {
+  // DuckDuckGo Instant Answer API (good for facts/definitions)
   const ddgApiUrl =
     `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
   try {
@@ -307,24 +308,48 @@ async function webSearch(query) {
         return `Web search results for "${query}":\n${parts.map(r => `- ${r}`).join("\n")}`;
       }
     }
-  } catch { /* fall through to HTML scrape */ }
+  } catch { /* fall through */ }
 
-  // Fallback: scrape DuckDuckGo HTML results
+  // Fallback: DuckDuckGo HTML — corrected snippet extraction
   try {
     const htmlUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
     const res = await fetch(htmlUrl, {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; FrameForge/1.0)" },
-      signal: AbortSignal.timeout(8000)
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9"
+      },
+      signal: AbortSignal.timeout(10000)
     });
     if (res.ok) {
       const html = await res.text();
       const snippets = [];
-      for (const m of html.matchAll(/class="result__snippet"[^>]*>([\s\S]+?)<\/a>/g)) {
-        const text = m[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+
+      // DDG HTML wraps snippets in <a class="result__snippet">...</a>
+      const re = /<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
+      for (const m of html.matchAll(re)) {
+        const text = m[1].replace(/<[^>]+>/g, " ")
+          .replace(/&amp;/g, "&")
+          .replace(/&lt;/g, "<")
+          .replace(/&gt;/g, ">")
+          .replace(/&#x27;/g, "'")
+          .replace(/&quot;/g, '"')
+          .replace(/\s+/g, " ").trim();
         if (text) { snippets.push(text); if (snippets.length >= 5) break; }
       }
+
       if (snippets.length > 0) {
         return `Web search results for "${query}":\n${snippets.map(r => `- ${r}`).join("\n")}`;
+      }
+
+      // Last resort: grab result titles so the model has something to work with
+      const titleRe = /<a[^>]+class="result__a"[^>]*>([\s\S]*?)<\/a>/gi;
+      const titles = [];
+      for (const m of html.matchAll(titleRe)) {
+        const text = m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+        if (text) { titles.push(text); if (titles.length >= 5) break; }
+      }
+      if (titles.length > 0) {
+        return `Web search results for "${query}" (titles only):\n${titles.map(r => `- ${r}`).join("\n")}`;
       }
     }
   } catch { /* ignore */ }
