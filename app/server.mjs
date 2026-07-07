@@ -30,7 +30,7 @@ Rules:
 const PORT = Number(process.env.PORT) || 8123;
 const HOST = "127.0.0.1";
 const LLAMA_PORT = Number(process.env.LLAMA_PORT) || 8124;
-const CONTEXT_SIZE = Number(process.env.CONTEXT_SIZE) || 8192;
+const CONTEXT_SIZE = Number(process.env.CONTEXT_SIZE) || 32768;
 const MAX_ATTEMPTS = 2;
 
 // ── model / mmproj discovery ──────────────────────────────────────────────────
