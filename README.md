@@ -1,10 +1,6 @@
 # FrameForge
 
-![Chat Tab](https://github.com/user-attachments/assets/f9e98610-350c-431a-8923-87caec5eb6e1)
-
-![Prompt Tab](https://github.com/user-attachments/assets/25c6b88c-280b-4b47-b516-03854e46229a)
-
-![Bbox Editor](https://github.com/user-attachments/assets/68e4f049-06de-4b55-b5c5-928e85fd0ca9)
+![screenshot.png](screenshot.png)
 
 Describe an image — or upload a reference photo — and get a structured **Ideogram 4 JSON prompt** or a **plain text prompt** for models like Flux and SDXL, generated entirely on your machine.
 
