@@ -69,17 +69,32 @@ function downloadFile(url, dest, redirectCount = 0) {
   });
 }
 
-function extractZip(zipPath, destDir) {
+function isSupportedArchive(name) {
+  const lower = name.toLowerCase();
+  return lower.endsWith(".zip") || lower.endsWith(".tar.gz") || lower.endsWith(".tgz");
+}
+
+function extractArchive(archivePath, destDir) {
   fs.mkdirSync(destDir, { recursive: true });
+  const lower = archivePath.toLowerCase();
+  const isZip = lower.endsWith(".zip");
+  const isTarGz = lower.endsWith(".tar.gz") || lower.endsWith(".tgz");
   if (IS_WINDOWS) {
+    if (!isZip) {
+      throw new Error(`Unsupported archive format on Windows: ${path.basename(archivePath)}`);
+    }
     execSync(
-      `powershell -NoProfile -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${destDir}' -Force"`,
+      `powershell -NoProfile -Command "Expand-Archive -Path '${archivePath}' -DestinationPath '${destDir}' -Force"`,
       { stdio: "inherit" }
     );
+  } else if (isZip) {
+    execSync(`unzip -q -o "${archivePath}" -d "${destDir}"`, { stdio: "inherit" });
+  } else if (isTarGz) {
+    execSync(`tar -xzf "${archivePath}" -C "${destDir}"`, { stdio: "inherit" });
   } else {
-    execSync(`unzip -q -o "${zipPath}" -d "${destDir}"`, { stdio: "inherit" });
+    throw new Error(`Unsupported archive format: ${path.basename(archivePath)}`);
   }
-  fs.unlinkSync(zipPath);
+  fs.unlinkSync(archivePath);
 }
 
 function findBin(dir, name) {
@@ -122,7 +137,7 @@ if (IS_WINDOWS) {
 
   // Matches: llama-bXXXX-bin-win-cuda-12.4-x64.zip  (not cudart-)
   const cudaAsset = release.assets.find(a =>
-    a.name.endsWith(".zip") &&
+    isSupportedArchive(a.name) &&
     a.name.includes("win") &&
     a.name.includes("cuda-12.4") &&
     a.name.includes("x64") &&
@@ -150,7 +165,7 @@ if (IS_WINDOWS) {
   if (cudaSizeMB < 10) throw new Error("CUDA zip too small — download failed");
 
   console.log("  Extracting...");
-  extractZip(cudaZip, binDir);
+  extractArchive(cudaZip, binDir);
   hoistToBinRoot(binDir);
 
   if (cudartAsset) {
@@ -161,7 +176,7 @@ if (IS_WINDOWS) {
     console.log(`  Size on disk: ${cudartSizeMB.toFixed(1)} MB`);
     if (cudartSizeMB < 5) throw new Error("cudart zip too small — download failed");
     console.log("  Extracting...");
-    extractZip(cudartZip, binDir);
+    extractArchive(cudartZip, binDir);
     // cudart zip extracts flat, no subdir to hoist
   } else {
     console.warn("cudart zip not found in release — if llama-server fails to start, install CUDA 12.4 toolkit.");
@@ -174,56 +189,59 @@ if (IS_WINDOWS) {
   // ── Linux: CUDA binary preferred, CPU fallback ────────────────────────────
   //
   // Typical asset names in llama.cpp releases:
-  //   llama-bXXXX-bin-ubuntu-x64.zip          (CPU / generic Ubuntu)
+  //   llama-bXXXX-bin-ubuntu-x64.zip            (CPU / generic Ubuntu)
   //   llama-bXXXX-bin-ubuntu-cuda-12.4-x64.zip  (CUDA build)
-  //   llama-bXXXX-bin-linux-x64.zip            (alternative naming)
+  //   llama-bXXXX-bin-linux-x64.zip             (alternative naming)
+  //   llama-bXXXX-bin-ubuntu-x86_64.tar.gz      (newer naming/format variants)
+
+  const isLinuxX64Asset = (a) =>
+    isSupportedArchive(a.name) &&
+    (a.name.includes("ubuntu") || a.name.includes("linux")) &&
+    (a.name.includes("x64") || a.name.includes("x86_64") || a.name.includes("amd64")) &&
+    !a.name.includes("arm") &&
+    !a.name.startsWith("cudart-");
 
   // Try CUDA build first (prefer any CUDA version, prefer 12.4)
   let linuxAsset =
     release.assets.find(a =>
-      a.name.endsWith(".zip") &&
-      (a.name.includes("ubuntu") || a.name.includes("linux")) &&
+      isLinuxX64Asset(a) &&
       a.name.includes("cuda-12.4") &&
-      a.name.includes("x64") &&
-      !a.name.startsWith("cudart-")
+      !a.name.includes("vulkan")
     ) ||
     release.assets.find(a =>
-      a.name.endsWith(".zip") &&
-      (a.name.includes("ubuntu") || a.name.includes("linux")) &&
+      isLinuxX64Asset(a) &&
       a.name.includes("cuda") &&
-      a.name.includes("x64") &&
-      !a.name.startsWith("cudart-")
+      !a.name.includes("vulkan")
     ) ||
     // CPU / generic Ubuntu fallback
     release.assets.find(a =>
-      a.name.endsWith(".zip") &&
-      a.name.includes("ubuntu") &&
-      a.name.includes("x64") &&
-      !a.name.includes("arm") &&
-      !a.name.startsWith("cudart-")
+      isLinuxX64Asset(a) &&
+      a.name.includes("ubuntu")
     ) ||
     release.assets.find(a =>
-      a.name.endsWith(".zip") &&
-      a.name.includes("linux") &&
-      a.name.includes("x64") &&
-      !a.name.includes("arm") &&
-      !a.name.startsWith("cudart-")
+      isLinuxX64Asset(a) &&
+      a.name.includes("linux")
     );
 
   if (!linuxAsset) {
     console.error("Available assets:\n" + release.assets.map(a => a.name).join("\n"));
-    throw new Error("Could not find a Linux x64 zip. Check the asset list above.");
+    throw new Error("Could not find a Linux x64 archive (.zip/.tar.gz). Check the asset list above.");
   }
 
-  const linuxZip = path.join(appDir, "llama-linux.zip");
+  const linuxArchiveExt = linuxAsset.name.toLowerCase().endsWith(".tar.gz")
+    ? ".tar.gz"
+    : linuxAsset.name.toLowerCase().endsWith(".tgz")
+      ? ".tgz"
+      : ".zip";
+  const linuxArchive = path.join(appDir, `llama-linux${linuxArchiveExt}`);
   console.log(`\nDownloading Linux binary: ${linuxAsset.name}`);
-  await downloadFile(linuxAsset.browser_download_url, linuxZip);
-  const linuxSizeMB = fs.statSync(linuxZip).size / 1024 / 1024;
+  await downloadFile(linuxAsset.browser_download_url, linuxArchive);
+  const linuxSizeMB = fs.statSync(linuxArchive).size / 1024 / 1024;
   console.log(`  Size on disk: ${linuxSizeMB.toFixed(1)} MB`);
-  if (linuxSizeMB < 5) throw new Error("Linux zip too small — download failed");
+  if (linuxSizeMB < 5) throw new Error("Linux archive too small — download failed");
 
   console.log("  Extracting...");
-  extractZip(linuxZip, binDir);
+  extractArchive(linuxArchive, binDir);
   hoistToBinRoot(binDir);
 
   console.log(`\nDone — llama-server is ready in ${binDir}`);
