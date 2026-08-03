@@ -10,7 +10,7 @@ module.exports = {
         message: ["npm install"]
       }
     },
-    // Download pre-built llama.cpp Windows binaries (llama-server.exe etc.)
+    // Download pre-built llama.cpp binaries for the current platform (Windows or Linux)
     {
       method: "shell.run",
       params: {
