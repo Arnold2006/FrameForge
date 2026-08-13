@@ -11,7 +11,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { normalizeCaption, serializeCaption } from "./src/normalize.mjs";
 import { validateCaption } from "./src/validate.mjs";
-import { SYSTEM_PROMPT, FEW_SHOT } from "./src/prompt.mjs";
+import { SYSTEM_PROMPT, FEW_SHOT, MINIMAX_SYSTEM_PROMPT } from "./src/prompt.mjs";
 import { GENERATION_SCHEMA } from "./src/generation-schema.mjs";
 import { IDEOGRAM_SCHEMA } from "./src/ideogram-schema.mjs";
 import { webSearch } from "./src/web-search.mjs";
@@ -199,7 +199,55 @@ function buildPlainMessages(description, imageBase64, aspectRatio = "1:1", steer
   return messages;
 }
 
-// ── call llama-server via OpenAI-compatible streaming API ─────────────────────
+// ── build messages for MiniMax H3 ComfyUI mode ───────────────────────────────
+function buildMiniMaxMessages(description, imageBase64, steering = "") {
+  const sysPrompt = steering
+    ? MINIMAX_SYSTEM_PROMPT + "\n\nAdditional style guidance:\n" + steering
+    : MINIMAX_SYSTEM_PROMPT;
+  const messages = [{ role: "system", content: sysPrompt }];
+  let userContent;
+  if (imageBase64) {
+    const base64Data = imageBase64.replace(/^data:[^;]+;base64,/, "");
+    userContent = [
+      { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Data}` } },
+      { type: "text", text: description
+          ? `Generate a MiniMax H3 ComfyUI prompt for this scene. Extra context: ${description}`
+          : "Generate a MiniMax H3 ComfyUI prompt for the scene shown in this image." }
+    ];
+  } else {
+    userContent = description;
+  }
+  messages.push({ role: "user", content: userContent });
+  return messages;
+}
+
+// ── MiniMax generation pipeline ───────────────────────────────────────────────
+async function generateMiniMax(description, imageBase64, emit, steering = "") {
+  const started = Date.now();
+  const messages = buildMiniMaxMessages(description, imageBase64, steering);
+  let text;
+  try {
+    text = await callLlamaServerPlain(
+      messages,
+      (chunk) => emit({ type: "chunk", text: chunk })
+    );
+  } catch (err) {
+    emit({ type: "error", message: String(err?.message || err) });
+    return;
+  }
+  if (!text || text.trim().length === 0) {
+    emit({ type: "error", message: "MiniMax generation produced empty output." });
+    return;
+  }
+  emit({
+    type: "done",
+    mode: "minimax",
+    text: text.trim(),
+    duration_ms: Date.now() - started
+  });
+}
+
+
 async function callLlamaServer(messages, temperature, onChunk) {
   const res = await fetch(`http://127.0.0.1:${LLAMA_PORT}/v1/chat/completions`, {
     method: "POST",
@@ -450,7 +498,9 @@ function generateForFile(reqMode, imageBase64, aspectRatio, steering, forwardEmi
     };
     const job = reqMode === "plain"
       ? generatePlain("", imageBase64, emit, aspectRatio, steering)
-      : generateCaption("", imageBase64, emit, aspectRatio, steering);
+      : reqMode === "minimax"
+        ? generateMiniMax("", imageBase64, emit, steering)
+        : generateCaption("", imageBase64, emit, aspectRatio, steering);
     job.then(() => resolve(resultEvent ?? { type: "error", message: "no result produced" }));
   });
 }
@@ -502,9 +552,9 @@ async function generateFolder(folderPath, reqMode, aspectRatio, steering, emit) 
       continue;
     }
 
-    const isPlain = result.mode === "plain";
-    const content = isPlain ? result.text : JSON.stringify(result.prompt, null, 2);
-    const outName = base + (isPlain ? ".txt" : ".json");
+    const isTextMode = result.mode === "plain" || result.mode === "minimax";
+    const content = isTextMode ? result.text : JSON.stringify(result.prompt, null, 2);
+    const outName = base + (isTextMode ? ".txt" : ".json");
     const outPath = path.join(folderPath, outName);
     try {
       fs.writeFileSync(outPath, content, "utf8");
@@ -594,6 +644,7 @@ const server = http.createServer(async (req, res) => {
       description = typeof body.description === "string" ? body.description.trim() : "";
       if (typeof body.image === "string" && body.image.length > 0) imageBase64 = body.image;
       if (body.mode === "plain") reqMode = "plain";
+      if (body.mode === "minimax") reqMode = "minimax";
       if (typeof body.aspectRatio === "string") aspectRatio = body.aspectRatio;
     } catch {
       sendJson(res, 400, { error: "invalid JSON body" });
@@ -613,6 +664,8 @@ const server = http.createServer(async (req, res) => {
     try {
       if (reqMode === "plain") {
         await enqueue(() => generatePlain(description, imageBase64, emit, aspectRatio));
+      } else if (reqMode === "minimax") {
+        await enqueue(() => generateMiniMax(description, imageBase64, emit));
       } else {
         await enqueue(() => generateCaption(description, imageBase64, emit, aspectRatio));
       }
@@ -629,6 +682,7 @@ const server = http.createServer(async (req, res) => {
       const body = JSON.parse(await readBody(req));
       folderPath = typeof body.folderPath === "string" ? body.folderPath.trim() : "";
       if (body.mode === "plain") reqMode = "plain";
+      if (body.mode === "minimax") reqMode = "minimax";
       if (typeof body.aspectRatio === "string") aspectRatio = body.aspectRatio;
       if (typeof body.steering === "string") steering = body.steering.trim();
     } catch {

@@ -432,32 +432,24 @@
     .edit-area { border-radius: 0; }
   }
 
-  /* ── mode toggle ── */
-  .mode-toggle {
+  /* ── mode selector ── */
+  .mode-select-wrap {
     display: flex; align-items: center; justify-content: center;
-    gap: 12px; margin-bottom: 20px;
+    gap: 10px; margin-bottom: 20px;
   }
-  .mode-label {
+  .mode-select-label {
     font-size: 13px; font-weight: 500; color: var(--muted);
-    transition: color 0.2s; cursor: pointer; user-select: none;
   }
-  .mode-label.active { color: var(--fg); }
-  .toggle-track {
-    position: relative; width: 44px; height: 24px;
-    background: var(--border); border-radius: 999px;
-    cursor: pointer; transition: background 0.2s; flex-shrink: 0;
-    border: 1px solid var(--border);
+  .mode-select {
+    font: inherit; font-size: 13px; font-weight: 500;
+    color: var(--fg); background: var(--card);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px 10px; cursor: pointer; outline: 0;
+    transition: border-color 0.15s;
   }
-  .toggle-track.plain { background: var(--accent); }
-  .toggle-thumb {
-    position: absolute; top: 2px; left: 2px;
-    width: 18px; height: 18px; border-radius: 50%;
-    background: var(--card); box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-    transition: transform 0.2s;
-  }
-  .toggle-track.plain .toggle-thumb { transform: translateX(20px); }
+  .mode-select:focus { border-color: var(--accent); }
 
-  /* plain text output */
+  /* plain text / minimax output */
   .plain-out {
     margin: 0; padding: 20px;
     font: 14px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -562,12 +554,15 @@
         <div class="prompt-inner">
 
   <h1 id="pageTitle">Describe an image</h1>
-  <p class="sub" id="pageSub">Get a structured Ideogram 4 JSON prompt or a plain text prompt, generated locally.</p>
+  <p class="sub" id="pageSub">Generate a structured Ideogram 4 JSON prompt, a plain text prompt, or a MiniMax H3 (ComfyUI) video prompt — all locally.</p>
 
-  <div class="mode-toggle">
-    <span class="mode-label active" id="labelIdeogram">Ideogram 4 JSON</span>
-    <div class="toggle-track" id="toggleTrack"><div class="toggle-thumb"></div></div>
-    <span class="mode-label" id="labelPlain">Plain text</span>
+  <div class="mode-select-wrap">
+    <label class="mode-select-label" for="modeSelect">Generation target</label>
+    <select id="modeSelect" class="mode-select">
+      <option value="ideogram">Ideogram 4 JSON</option>
+      <option value="plain">Plain text</option>
+      <option value="minimax">MiniMax H3 (ComfyUI)</option>
+    </select>
   </div>
 
   <div class="card">
@@ -632,7 +627,7 @@
         <input type="text" id="batchFolder" class="batch-input" placeholder="/path/to/folder" spellcheck="false">
         <button class="go" id="batchGo"><span class="spinner"></span><span id="batchGoText">Run</span></button>
       </div>
-      <p class="batch-hint">Uses the mode and aspect ratio selected above. If you've typed a description above, it will steer every caption (e.g. "always describe the red bicycle"). Saves a caption file next to each image, named after the image with a matching extension (.txt for plain text, .json for Ideogram JSON).</p>
+      <p class="batch-hint">Uses the mode and aspect ratio selected above. If you've typed a description above, it will steer every caption (e.g. "always describe the red bicycle"). Saves a caption file next to each image, named after the image with a matching extension (.txt for plain text and MiniMax H3, .json for Ideogram JSON).</p>
       <div class="batch-list" id="batchList"></div>
     </div>
   </div>
@@ -725,23 +720,22 @@ function switchTab(tab) {
 $("tabBtnPrompt").addEventListener("click", () => switchTab("prompt"));
 $("tabBtnChat").addEventListener("click", () => switchTab("chat"));
 
-// ── mode toggle ──────────────────────────────────────────────────
-const toggleTrack   = $("toggleTrack");
-const labelIdeogram = $("labelIdeogram");
-const labelPlain    = $("labelPlain");
-const plainOut      = $("plainOut");
-let mode = "ideogram"; // "ideogram" | "plain"
+// ── mode selector ──────────────────────────────────────────────────
+const modeSelect = $("modeSelect");
+const plainOut   = $("plainOut");
+let mode = "ideogram"; // "ideogram" | "plain" | "minimax"
 
-toggleTrack.addEventListener("click", () => {
+function applyModeUI() {
+  jsonEl.style.display   = mode === "ideogram" ? "" : "none";
+  layoutEl.style.display = mode === "ideogram" && current ? "" : "none";
+  const isTextMode = mode === "plain" || mode === "minimax";
+  plainOut.classList.toggle("show", isTextMode && !!plainText);
+}
+
+modeSelect.addEventListener("change", () => {
   if (isEditing) exitEditMode();
-  mode = mode === "ideogram" ? "plain" : "ideogram";
-  toggleTrack.classList.toggle("plain", mode === "plain");
-  labelIdeogram.classList.toggle("active", mode === "ideogram");
-  labelPlain.classList.toggle("active", mode === "plain");
-  // swap visible output panel
-  jsonEl.style.display    = mode === "ideogram" ? "" : "none";
-  layoutEl.style.display  = mode === "ideogram" && current ? "" : "none";
-  plainOut.classList.toggle("show", mode === "plain" && !!plainText);
+  mode = modeSelect.value;
+  applyModeUI();
 });
 const input = $("input"), go = $("go"), out = $("out"), jsonEl = $("json");
 const badge = $("badge"), meta = $("meta"), copyBtn = $("copy");
@@ -836,7 +830,8 @@ let isEditing = false;
 // ── edit mode ────────────────────────────────────────────────────
 function enterEditMode() {
   isEditing = true;
-  editArea.value = mode === "plain"
+  const isTextMode = mode === "plain" || mode === "minimax";
+  editArea.value = isTextMode
     ? (plainText || "")
     : JSON.stringify(current, null, 2);
   editArea.classList.add("show");
@@ -850,7 +845,8 @@ function exitEditMode() {
   isEditing = false;
   editArea.classList.remove("show");
   editBtn.textContent = "Edit";
-  if (mode === "plain") {
+  const isTextMode = mode === "plain" || mode === "minimax";
+  if (isTextMode) {
     plainText = editArea.value;
     plainOut.textContent = plainText;
     plainOut.classList.add("show");
@@ -1201,13 +1197,14 @@ async function generate() {
           meta.textContent = (event.duration_ms / 1000).toFixed(1) + "s";
           copyBtn.style.display = "";
           editBtn.style.display = "";
-          if (event.mode === "plain") {
+          if (event.mode === "plain" || event.mode === "minimax") {
             plainText = event.text;
             plainOut.textContent = plainText;
             plainOut.classList.add("show");
             jsonEl.style.display = "none";
             layoutEl.style.display = "none";
-            setBadge("valid", "✓ Plain text prompt");
+            const label = event.mode === "minimax" ? "✓ MiniMax H3 prompt" : "✓ Plain text prompt";
+            setBadge("valid", label);
             copyBtn.onclick = async () => {
               const text = isEditing ? editArea.value : plainText;
               await navigator.clipboard.writeText(text);
